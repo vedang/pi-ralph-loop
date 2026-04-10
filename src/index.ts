@@ -14,8 +14,8 @@ import {
   defaultProgressPathForPlan,
   parseRalphCommand,
 } from "./command.js";
-import { buildIterationPrompt } from "./prompt.js";
-import { seedBuiltinTarget } from "./targets.js";
+import { buildIterationPrompt, buildRalphSystemPrompt } from "./prompt.js";
+import { buildProgressTemplate, seedBuiltinTarget } from "./targets.js";
 import { hasCompleteSigil } from "./text.js";
 
 type RalphTargetName = RalphBuiltinTarget | "custom";
@@ -50,6 +50,40 @@ interface RalphState {
 
 const STATUS_KEY = "ralph-loop";
 const ANCHOR_MESSAGE_TYPE = "ralph-loop-anchor";
+
+const FINAL_REASON_MESSAGES: Record<
+  RalphStopReason,
+  { level: "info" | "warning" | "error"; text: (targetLabel: string) => string }
+> = {
+  complete: {
+    level: "info",
+    text: (targetLabel) => `Ralph loop complete for ${targetLabel}.`,
+  },
+  stop: {
+    level: "info",
+    text: (targetLabel) => `Ralph loop stopped for ${targetLabel}.`,
+  },
+  manual: {
+    level: "warning",
+    text: (targetLabel) =>
+      `Ralph loop stopped by manual input for ${targetLabel}.`,
+  },
+  max: {
+    level: "warning",
+    text: (targetLabel) =>
+      `Ralph loop hit the max-iteration cap for ${targetLabel}.`,
+  },
+  once: {
+    level: "info",
+    text: (targetLabel) =>
+      `Ralph loop completed the single requested iteration for ${targetLabel}.`,
+  },
+  error: {
+    level: "error",
+    text: (targetLabel) =>
+      `Ralph loop stopped due to an error for ${targetLabel}.`,
+  },
+};
 
 let state: RalphState | null = null;
 
@@ -115,20 +149,7 @@ function ensureProgressFile(
   }
 
   ensureParentDirectory(progressFilePath);
-  writeFileSync(
-    progressFilePath,
-    [
-      `# Progress: Ralph ${targetName}`,
-      "",
-      "## Status",
-      "in progress",
-      "",
-      "## Iterations",
-      "- Initialized Ralph progress file.",
-      "",
-    ].join("\n"),
-    "utf8",
-  );
+  writeFileSync(progressFilePath, buildProgressTemplate(targetName), "utf8");
 }
 
 function ensureAnchorEntry(
@@ -161,38 +182,8 @@ function finalizeLoop(ctx: ExtensionContext, reason: RalphStopReason): void {
   }
 
   const targetLabel = lastState?.targetName ?? "ralph";
-  switch (reason) {
-    case "complete":
-      ctx.ui.notify(`Ralph loop complete for ${targetLabel}.`, "info");
-      break;
-    case "stop":
-      ctx.ui.notify(`Ralph loop stopped for ${targetLabel}.`, "info");
-      break;
-    case "manual":
-      ctx.ui.notify(
-        `Ralph loop stopped by manual input for ${targetLabel}.`,
-        "warning",
-      );
-      break;
-    case "max":
-      ctx.ui.notify(
-        `Ralph loop hit the max-iteration cap for ${targetLabel}.`,
-        "warning",
-      );
-      break;
-    case "once":
-      ctx.ui.notify(
-        `Ralph loop completed the single requested iteration for ${targetLabel}.`,
-        "info",
-      );
-      break;
-    case "error":
-      ctx.ui.notify(
-        `Ralph loop stopped due to an error for ${targetLabel}.`,
-        "error",
-      );
-      break;
-  }
+  const message = FINAL_REASON_MESSAGES[reason];
+  ctx.ui.notify(message.text(targetLabel), message.level);
 }
 
 function startIteration(ctx: ExtensionContext, pi: ExtensionAPI): void {
@@ -279,6 +270,43 @@ function resolveStartCommand(
   };
 }
 
+function getCollapseOutcome(
+  finalReason: PendingCollapse["finalReason"],
+): string {
+  if (finalReason === "complete") {
+    return "Iteration completed the entire Ralph plan.";
+  }
+  if (finalReason === "stop") {
+    return "Iteration finished and the Ralph loop was stopped by the user.";
+  }
+  if (finalReason === "max") {
+    return "Iteration finished and the Ralph loop hit its max-iteration cap.";
+  }
+  if (finalReason === "once") {
+    return "Iteration finished and single-iteration mode completed.";
+  }
+  return "Iteration completed; re-read the plan and progress files before continuing.";
+}
+
+function getFinalReason(
+  currentState: RalphState,
+  assistantText: string,
+): PendingCollapse["finalReason"] {
+  if (hasCompleteSigil(assistantText)) {
+    return "complete";
+  }
+  if (currentState.stopping) {
+    return "stop";
+  }
+  if (currentState.runMode === "once") {
+    return "once";
+  }
+  if (currentState.iteration >= currentState.maxIterations) {
+    return "max";
+  }
+  return null;
+}
+
 export default function ralphLoopExtension(pi: ExtensionAPI): void {
   pi.on("input", (event, ctx) => {
     if (!state?.active || event.source === "extension") {
@@ -298,13 +326,13 @@ export default function ralphLoopExtension(pi: ExtensionAPI): void {
     }
 
     return {
-      systemPrompt: `${event.systemPrompt}
-
-RALPH LOOP ACTIVE
-Iteration: ${state.iteration}/${state.maxIterations}
-Plan file: ${state.planFilePath}
-Progress file: ${state.progressFilePath}
-Read the attached artifacts each iteration, work on exactly one task, run relevant feedback loops before finishing, make a git commit for the iteration, and use <COMPLETE> on a line by itself when everything is done.`,
+      systemPrompt: buildRalphSystemPrompt({
+        basePrompt: event.systemPrompt,
+        iteration: state.iteration,
+        maxIterations: state.maxIterations,
+        planFilePath: state.planFilePath,
+        progressFilePath: state.progressFilePath,
+      }),
     };
   });
 
@@ -317,17 +345,6 @@ Read the attached artifacts each iteration, work on exactly one task, run releva
       return;
     }
 
-    const outcome =
-      state.pendingCollapse.finalReason === "complete"
-        ? "Iteration completed the entire Ralph plan."
-        : state.pendingCollapse.finalReason === "stop"
-          ? "Iteration finished and the Ralph loop was stopped by the user."
-          : state.pendingCollapse.finalReason === "max"
-            ? "Iteration finished and the Ralph loop hit its max-iteration cap."
-            : state.pendingCollapse.finalReason === "once"
-              ? "Iteration finished and single-iteration mode completed."
-              : "Iteration completed; re-read the plan and progress files before continuing.";
-
     return {
       summary: {
         summary: [
@@ -338,7 +355,7 @@ Read the attached artifacts each iteration, work on exactly one task, run releva
           state.attachmentPaths.length > 0
             ? `Artifacts: ${state.attachmentPaths.join(", ")}`
             : "",
-          `Outcome: ${outcome}`,
+          `Outcome: ${getCollapseOutcome(state.pendingCollapse.finalReason)}`,
         ]
           .filter(Boolean)
           .join("\n"),
@@ -355,17 +372,7 @@ Read the attached artifacts each iteration, work on exactly one task, run releva
       return;
     }
 
-    const finalReason: PendingCollapse["finalReason"] = hasCompleteSigil(
-      getAssistantText(event.messages),
-    )
-      ? "complete"
-      : state.stopping
-        ? "stop"
-        : state.runMode === "once"
-          ? "once"
-          : state.iteration >= state.maxIterations
-            ? "max"
-            : null;
+    const finalReason = getFinalReason(state, getAssistantText(event.messages));
 
     const targetId = state.iterationAnchorId;
     const commandCtx = state.storedCommandCtx;

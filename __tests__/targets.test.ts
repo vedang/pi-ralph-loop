@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { seedBuiltinTarget } from "../src/targets";
+import { buildProgressTemplate, seedBuiltinTarget } from "../src/targets";
 
 test("seedBuiltinTarget creates workflow-native unit-tests artifacts", () => {
   const cwd = mkdtempSync(join(tmpdir(), "ralph-loop-unit-tests-"));
@@ -26,6 +26,11 @@ test("seedBuiltinTarget creates workflow-native unit-tests artifacts", () => {
   assert.match(plan, /ONLY WORK ON A SINGLE TASK PER ITERATION\./);
   assert.match(plan, /Keep production code changes minimal/i);
   assert.match(plan, /all necessary automated tests/i);
+  assert.match(plan, /Make a git commit after each successful iteration\./i);
+  assert.match(
+    plan,
+    /Do not consider a task complete while relevant feedback loops are failing\./i,
+  );
 });
 
 test("seedBuiltinTarget creates clean-room artifacts including spec.md", () => {
@@ -44,6 +49,11 @@ test("seedBuiltinTarget creates clean-room artifacts including spec.md", () => {
   assert.match(plan, /spec\.md/);
   assert.match(plan, /avoid copying implementation code verbatim/i);
   assert.match(plan, /clean-room reimplementation/i);
+  assert.match(plan, /Make a git commit after each successful iteration\./i);
+  assert.match(
+    plan,
+    /Do not consider a task complete while relevant feedback loops are failing\./i,
+  );
 });
 
 test("seedBuiltinTarget rejects task-folder timestamp collisions", () => {
@@ -55,5 +65,16 @@ test("seedBuiltinTarget rejects task-folder timestamp collisions", () => {
   assert.throws(
     () => seedBuiltinTarget({ cwd, target: "unit-tests", now }),
     /Built-in Ralph task directory already exists/,
+  );
+});
+
+test("buildProgressTemplate preserves custom and built-in initialization wording", () => {
+  assert.match(
+    buildProgressTemplate("custom"),
+    /Initialized Ralph progress file\./,
+  );
+  assert.match(
+    buildProgressTemplate("unit-tests"),
+    /Initialized Ralph loop artifacts\./,
   );
 });

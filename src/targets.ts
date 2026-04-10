@@ -1,6 +1,8 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 
+import { SINGLE_TASK_RULE } from "./prompt.js";
+
 export type RalphBuiltinTarget = "unit-tests" | "clean-room";
 
 export interface SeededBuiltinTarget {
@@ -32,7 +34,14 @@ export function formatTaskTimestamp(date: Date): string {
   ].join("T");
 }
 
-function progressTemplate(target: RalphBuiltinTarget): string {
+export function buildProgressTemplate(
+  target: RalphBuiltinTarget | "custom",
+): string {
+  const initializationLine =
+    target === "custom"
+      ? "- Initialized Ralph progress file."
+      : "- Initialized Ralph loop artifacts.";
+
   return [
     `# Progress: Ralph ${target}`,
     "",
@@ -40,10 +49,23 @@ function progressTemplate(target: RalphBuiltinTarget): string {
     "in progress",
     "",
     "## Iterations",
-    "- Initialized Ralph loop artifacts.",
+    initializationLine,
     "",
   ].join("\n");
 }
+
+const SHARED_RULE_LINES = [
+  `- ${SINGLE_TASK_RULE}`,
+  "- Run relevant feedback loops (`make test`, `make check`, `make format`) before considering a task complete.",
+  "- Do not consider a task complete while relevant feedback loops are failing.",
+  "- Make a git commit after each successful iteration.",
+  "- Update `progress.md` concisely after each iteration.",
+] as const;
+
+const SHARED_COMPLETION_LINES = [
+  "- When complete, output `<COMPLETE>` on a line by itself.",
+  "",
+] as const;
 
 function unitTestsPlanTemplate(): string {
   return [
@@ -53,21 +75,16 @@ function unitTestsPlanTemplate(): string {
     "Ensure this repository has all necessary automated tests for the important behaviors you can identify.",
     "",
     "## Ralph Loop Rules",
-    "- ONLY WORK ON A SINGLE TASK PER ITERATION.",
     "- Pick the single highest-priority missing or weak test area.",
     "- Add or improve tests first.",
     "- Keep production code changes minimal and only make them when required to enable testing.",
-    "- Run relevant feedback loops (`make test`, `make check`, `make format`) before considering a task complete.",
-    "- Do not consider a task complete while relevant feedback loops are failing.",
-    "- Make a git commit after each successful iteration.",
-    "- Update `progress.md` concisely after each iteration.",
+    ...SHARED_RULE_LINES,
     "",
     "## Completion Criteria",
     "- All necessary automated tests that you can reasonably identify are present.",
     "- The test suite is healthy.",
     "- No higher-priority missing coverage area remains.",
-    "- When complete, output `<COMPLETE>` on a line by itself.",
-    "",
+    ...SHARED_COMPLETION_LINES,
   ].join("\n");
 }
 
@@ -79,21 +96,16 @@ function cleanRoomPlanTemplate(): string {
     "Create and refine `spec.md` until it is sufficient for an independent clean-room reimplementation of this repository in another programming language.",
     "",
     "## Ralph Loop Rules",
-    "- ONLY WORK ON A SINGLE TASK PER ITERATION.",
     "- Read the repository source and improve only one high-value section of the spec each iteration.",
     "- Use `spec.md` as the persistent clean-room artifact.",
     "- Capture behavior, interfaces, data structures, workflows, constraints, error handling, and test expectations.",
     "- Avoid copying implementation code verbatim into the specification.",
-    "- Run relevant feedback loops (`make test`, `make check`, `make format`) before considering a task complete.",
-    "- Do not consider a task complete while relevant feedback loops are failing.",
-    "- Make a git commit after each successful iteration.",
-    "- Update `progress.md` concisely after each iteration.",
+    ...SHARED_RULE_LINES,
     "",
     "## Completion Criteria",
     "- `spec.md` is coherent, complete, and implementation-oriented.",
     "- Another engineer could use `spec.md` to produce a clean-room reimplementation without depending on the original source code.",
-    "- When complete, output `<COMPLETE>` on a line by itself.",
-    "",
+    ...SHARED_COMPLETION_LINES,
   ].join("\n");
 }
 
@@ -146,7 +158,11 @@ export function seedBuiltinTarget(
   const progressFilePath = join(taskDir, "progress.md");
   const attachmentPaths: string[] = [];
 
-  writeFileSync(progressFilePath, progressTemplate(options.target), "utf8");
+  writeFileSync(
+    progressFilePath,
+    buildProgressTemplate(options.target),
+    "utf8",
+  );
 
   if (options.target === "unit-tests") {
     writeFileSync(planFilePath, unitTestsPlanTemplate(), "utf8");

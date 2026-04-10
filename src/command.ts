@@ -76,6 +76,48 @@ function parseMaxIterations(token: string, optionName: string): number {
   return parsed;
 }
 
+function parseNonStartCommand(
+  name: string | undefined,
+  runMode: RalphRunMode,
+  positionals: string[],
+  maxIterationsSpecified: boolean,
+): Extract<RalphCommand, { kind: "status" | "stop" }> | null {
+  if (name !== "status" && name !== "stop") {
+    return null;
+  }
+
+  if (runMode === "once") {
+    throw new Error(
+      `${name === "status" ? "Status" : "Stop"} does not accept once mode`,
+    );
+  }
+  if (positionals.length !== 1) {
+    throw new Error(
+      `${name === "status" ? "Status" : "Stop"} does not accept positional arguments`,
+    );
+  }
+  if (maxIterationsSpecified) {
+    throw new Error(
+      `${name === "status" ? "Status" : "Stop"} does not accept max-iteration options`,
+    );
+  }
+
+  return { kind: name };
+}
+
+function createStartCommand(
+  runMode: RalphRunMode,
+  source: Extract<RalphCommand, { kind: "start" }>["source"],
+  maxIterations: number,
+): Extract<RalphCommand, { kind: "start" }> {
+  return {
+    kind: "start",
+    source,
+    runMode,
+    maxIterations,
+  };
+}
+
 export function parseRalphCommand(input: string): RalphCommand {
   const trimmed = input.trim();
   if (!trimmed) {
@@ -135,30 +177,14 @@ export function parseRalphCommand(input: string): RalphCommand {
   }
 
   const first = positionals[0]?.toLowerCase();
-  if (first === "status") {
-    if (runMode === "once") {
-      throw new Error("Status does not accept once mode");
-    }
-    if (positionals.length !== 1) {
-      throw new Error("Status does not accept positional arguments");
-    }
-    if (maxIterationsSpecified) {
-      throw new Error("Status does not accept max-iteration options");
-    }
-    return { kind: "status" };
-  }
-
-  if (first === "stop") {
-    if (runMode === "once") {
-      throw new Error("Stop does not accept once mode");
-    }
-    if (positionals.length !== 1) {
-      throw new Error("Stop does not accept positional arguments");
-    }
-    if (maxIterationsSpecified) {
-      throw new Error("Stop does not accept max-iteration options");
-    }
-    return { kind: "stop" };
+  const nonStartCommand = parseNonStartCommand(
+    first,
+    runMode,
+    positionals,
+    maxIterationsSpecified,
+  );
+  if (nonStartCommand) {
+    return nonStartCommand;
   }
 
   if (first === "unit-tests" || first === "clean-room") {
@@ -167,12 +193,11 @@ export function parseRalphCommand(input: string): RalphCommand {
         "Built-in Ralph targets do not accept extra positional arguments",
       );
     }
-    return {
-      kind: "start",
-      source: { kind: "builtin", target: first },
+    return createStartCommand(
       runMode,
+      { kind: "builtin", target: first },
       maxIterations,
-    };
+    );
   }
 
   if (positionals.length > 2) {
@@ -184,16 +209,15 @@ export function parseRalphCommand(input: string): RalphCommand {
     throw new Error("Expected <plan-file> after /ralph");
   }
 
-  return {
-    kind: "start",
-    source: {
+  return createStartCommand(
+    runMode,
+    {
       kind: "file",
       planFile: normalize(planFile),
       progressFile: progressFile ? normalize(progressFile) : undefined,
     },
-    runMode,
     maxIterations,
-  };
+  );
 }
 
 export function defaultProgressPathForPlan(planFilePath: string): string {
