@@ -19,17 +19,39 @@ test("parseRalphCommand rejects max-iteration flags for status and stop", () => 
   );
 });
 
+test("parseRalphCommand rejects once mode for status and stop", () => {
+  assert.throws(
+    () => parseRalphCommand("once status"),
+    /Status does not accept once mode/,
+  );
+  assert.throws(
+    () => parseRalphCommand("once stop"),
+    /Stop does not accept once mode/,
+  );
+});
+
 test("parseRalphCommand parses a built-in Ralph target", () => {
   assert.deepEqual(parseRalphCommand("unit-tests --max-iterations 7"), {
     kind: "start",
+    runMode: "loop",
     source: { kind: "builtin", target: "unit-tests" },
     maxIterations: 7,
+  });
+});
+
+test("parseRalphCommand parses once mode for built-in Ralph targets", () => {
+  assert.deepEqual(parseRalphCommand("once unit-tests --max-iterations 2"), {
+    kind: "start",
+    runMode: "once",
+    source: { kind: "builtin", target: "unit-tests" },
+    maxIterations: 2,
   });
 });
 
 test("parseRalphCommand parses explicit plan and progress files", () => {
   assert.deepEqual(parseRalphCommand("docs/plan.md docs/progress.md -n 3"), {
     kind: "start",
+    runMode: "loop",
     source: {
       kind: "file",
       planFile: "docs/plan.md",
@@ -39,11 +61,28 @@ test("parseRalphCommand parses explicit plan and progress files", () => {
   });
 });
 
+test("parseRalphCommand parses once mode for explicit plan files", () => {
+  assert.deepEqual(
+    parseRalphCommand("once docs/plan.md docs/progress.md -n 1"),
+    {
+      kind: "start",
+      runMode: "once",
+      source: {
+        kind: "file",
+        planFile: "docs/plan.md",
+        progressFile: "docs/progress.md",
+      },
+      maxIterations: 1,
+    },
+  );
+});
+
 test("parseRalphCommand supports quoted file paths", () => {
   assert.deepEqual(
     parseRalphCommand('"docs/my plan.md" "docs/my progress.md"'),
     {
       kind: "start",
+      runMode: "loop",
       source: {
         kind: "file",
         planFile: "docs/my plan.md",

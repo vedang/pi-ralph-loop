@@ -10,6 +10,7 @@ import type {
 import {
   type RalphBuiltinTarget,
   type RalphCommand,
+  type RalphRunMode,
   defaultProgressPathForPlan,
   parseRalphCommand,
 } from "./command.js";
@@ -18,7 +19,13 @@ import { seedBuiltinTarget } from "./targets.js";
 import { hasCompleteSigil } from "./text.js";
 
 type RalphTargetName = RalphBuiltinTarget | "custom";
-type RalphStopReason = "complete" | "stop" | "manual" | "max" | "error";
+type RalphStopReason =
+  | "complete"
+  | "stop"
+  | "manual"
+  | "max"
+  | "once"
+  | "error";
 
 interface PendingCollapse {
   targetId: string;
@@ -29,6 +36,7 @@ interface PendingCollapse {
 interface RalphState {
   active: boolean;
   stopping: boolean;
+  runMode: RalphRunMode;
   iteration: number;
   maxIterations: number;
   targetName: RalphTargetName;
@@ -172,6 +180,12 @@ function finalizeLoop(ctx: ExtensionContext, reason: RalphStopReason): void {
         "warning",
       );
       break;
+    case "once":
+      ctx.ui.notify(
+        `Ralph loop completed the single requested iteration for ${targetLabel}.`,
+        "info",
+      );
+      break;
     case "error":
       ctx.ui.notify(
         `Ralph loop stopped due to an error for ${targetLabel}.`,
@@ -290,7 +304,7 @@ RALPH LOOP ACTIVE
 Iteration: ${state.iteration}/${state.maxIterations}
 Plan file: ${state.planFilePath}
 Progress file: ${state.progressFilePath}
-Read the attached artifacts each iteration, work on exactly one task, and use <COMPLETE> on a line by itself when everything is done.`,
+Read the attached artifacts each iteration, work on exactly one task, run relevant feedback loops before finishing, make a git commit for the iteration, and use <COMPLETE> on a line by itself when everything is done.`,
     };
   });
 
@@ -310,7 +324,9 @@ Read the attached artifacts each iteration, work on exactly one task, and use <C
           ? "Iteration finished and the Ralph loop was stopped by the user."
           : state.pendingCollapse.finalReason === "max"
             ? "Iteration finished and the Ralph loop hit its max-iteration cap."
-            : "Iteration completed; re-read the plan and progress files before continuing.";
+            : state.pendingCollapse.finalReason === "once"
+              ? "Iteration finished and single-iteration mode completed."
+              : "Iteration completed; re-read the plan and progress files before continuing.";
 
     return {
       summary: {
@@ -345,9 +361,11 @@ Read the attached artifacts each iteration, work on exactly one task, and use <C
       ? "complete"
       : state.stopping
         ? "stop"
-        : state.iteration >= state.maxIterations
-          ? "max"
-          : null;
+        : state.runMode === "once"
+          ? "once"
+          : state.iteration >= state.maxIterations
+            ? "max"
+            : null;
 
     const targetId = state.iterationAnchorId;
     const commandCtx = state.storedCommandCtx;
@@ -468,11 +486,15 @@ Read the attached artifacts each iteration, work on exactly one task, and use <C
 
       try {
         const resolved = resolveStartCommand(command, ctx);
+        const effectiveMaxIterations =
+          command.runMode === "once" ? 1 : command.maxIterations;
+
         state = {
           active: true,
           stopping: false,
+          runMode: command.runMode,
           iteration: 1,
-          maxIterations: command.maxIterations,
+          maxIterations: effectiveMaxIterations,
           targetName: resolved.targetName,
           planFilePath: resolved.planFilePath,
           progressFilePath: resolved.progressFilePath,

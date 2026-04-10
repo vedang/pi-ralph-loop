@@ -1,12 +1,14 @@
 import { dirname, join, normalize } from "node:path";
 
 export type RalphBuiltinTarget = "unit-tests" | "clean-room";
+export type RalphRunMode = "loop" | "once";
 
 export type RalphCommand =
   | { kind: "status" }
   | { kind: "stop" }
   | {
       kind: "start";
+      runMode: RalphRunMode;
       source:
         | { kind: "builtin"; target: RalphBuiltinTarget }
         | { kind: "file"; planFile: string; progressFile?: string };
@@ -84,6 +86,7 @@ export function parseRalphCommand(input: string): RalphCommand {
   const positionals: string[] = [];
   let maxIterations = DEFAULT_MAX_ITERATIONS;
   let maxIterationsSpecified = false;
+  let runMode: RalphRunMode = "loop";
 
   for (let index = 0; index < tokens.length; index += 1) {
     const token = tokens[index] ?? "";
@@ -121,12 +124,21 @@ export function parseRalphCommand(input: string): RalphCommand {
     positionals.push(token);
   }
 
+  const onceRequested = positionals[0]?.toLowerCase() === "once";
+  if (onceRequested) {
+    runMode = "once";
+    positionals.shift();
+  }
+
   if (positionals.length === 0) {
     throw new Error("Missing /ralph arguments");
   }
 
   const first = positionals[0]?.toLowerCase();
   if (first === "status") {
+    if (runMode === "once") {
+      throw new Error("Status does not accept once mode");
+    }
     if (positionals.length !== 1) {
       throw new Error("Status does not accept positional arguments");
     }
@@ -137,6 +149,9 @@ export function parseRalphCommand(input: string): RalphCommand {
   }
 
   if (first === "stop") {
+    if (runMode === "once") {
+      throw new Error("Stop does not accept once mode");
+    }
     if (positionals.length !== 1) {
       throw new Error("Stop does not accept positional arguments");
     }
@@ -155,6 +170,7 @@ export function parseRalphCommand(input: string): RalphCommand {
     return {
       kind: "start",
       source: { kind: "builtin", target: first },
+      runMode,
       maxIterations,
     };
   }
@@ -175,6 +191,7 @@ export function parseRalphCommand(input: string): RalphCommand {
       planFile: normalize(planFile),
       progressFile: progressFile ? normalize(progressFile) : undefined,
     },
+    runMode,
     maxIterations,
   };
 }
