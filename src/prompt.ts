@@ -1,3 +1,5 @@
+import { RALPH_SINGLE_TASK_RULE } from "./contract.js";
+
 export interface RalphIterationPromptOptions {
   iteration: number;
   planFilePath: string;
@@ -27,7 +29,7 @@ const ITERATION_INSTRUCTIONS = [
 const SYSTEM_PROMPT_REMINDER =
   "Read the attached artifacts each iteration, work on exactly one task, run relevant feedback loops before finishing, make a git commit for the iteration, and use <COMPLETE> on a line by itself when everything is done.";
 
-export const SINGLE_TASK_RULE = "ONLY WORK ON A SINGLE TASK PER ITERATION.";
+export const SINGLE_TASK_RULE = RALPH_SINGLE_TASK_RULE;
 
 function buildAttachmentLines(options: RalphIterationPromptOptions): string[] {
   return [

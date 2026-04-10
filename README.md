@@ -4,11 +4,30 @@ Ralph-style autonomous planning loops for pi.
 
 ## Commands
 
-- `/ralph [once] <plan-file> [progress-file]`
-- `/ralph [once] unit-tests`
-- `/ralph [once] clean-room`
+### Concrete usage
+
+- `/ralph <plan-file> [progress-file]`
+- `/ralph once <plan-file> [progress-file]`
+- `/ralph unit-tests`
+- `/ralph once unit-tests`
+- `/ralph clean-room`
+- `/ralph once clean-room`
+- `/ralph [once] <target> --max-iterations <n>`
 - `/ralph status`
 - `/ralph stop`
+
+Example forms:
+
+```text
+/ralph specs/plan.md
+/ralph once specs/plan.md proposals/progress.md
+/ralph unit-tests --max-iterations 7
+/ralph once unit-tests
+/ralph clean-room
+/ralph once clean-room
+/ralph status
+/ralph stop
+```
 
 ## Behavior
 

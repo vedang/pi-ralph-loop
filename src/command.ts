@@ -1,7 +1,8 @@
 import { dirname, join, normalize } from "node:path";
 
-export type RalphBuiltinTarget = "unit-tests" | "clean-room";
-export type RalphRunMode = "loop" | "once";
+import type { RalphBuiltinTarget, RalphRunMode } from "./contract.js";
+
+export type { RalphBuiltinTarget, RalphRunMode } from "./contract.js";
 
 export type RalphCommand =
   | { kind: "status" }

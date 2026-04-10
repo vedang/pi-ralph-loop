@@ -1,9 +1,10 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 
-import { SINGLE_TASK_RULE } from "./prompt.js";
+import { RALPH_SINGLE_TASK_RULE } from "./contract.js";
+import type { RalphBuiltinTarget } from "./contract.js";
 
-export type RalphBuiltinTarget = "unit-tests" | "clean-room";
+export type { RalphBuiltinTarget } from "./contract.js";
 
 export interface SeededBuiltinTarget {
   taskDir: string;
@@ -55,7 +56,7 @@ export function buildProgressTemplate(
 }
 
 const SHARED_RULE_LINES = [
-  `- ${SINGLE_TASK_RULE}`,
+  `- ${RALPH_SINGLE_TASK_RULE}`,
   "- Run relevant feedback loops (`make test`, `make check`, `make format`) before considering a task complete.",
   "- Do not consider a task complete while relevant feedback loops are failing.",
   "- Make a git commit after each successful iteration.",
