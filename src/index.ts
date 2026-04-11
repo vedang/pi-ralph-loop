@@ -4,7 +4,11 @@ import type {
   ExtensionContext,
 } from "@mariozechner/pi-coding-agent";
 
-import { type RalphCommand, parseRalphCommand } from "./command.js";
+import {
+  RALPH_HELP_TEXT,
+  type RalphCommand,
+  parseRalphCommand,
+} from "./command.js";
 import {
   RALPH_ANCHOR_MESSAGE_TYPE,
   RALPH_FINAL_REASON_MESSAGES,
@@ -77,6 +81,10 @@ function updateStatus(ctx: ExtensionContext | undefined): void {
 function clearState(ctx?: ExtensionContext): void {
   state = null;
   updateStatus(ctx);
+}
+
+function showRalphHelp(ctx: ExtensionContext): void {
+  ctx.ui.notify(RALPH_HELP_TEXT, "info");
 }
 
 function ensureAnchorEntry(
@@ -269,6 +277,11 @@ export default function ralphLoopExtension(pi: ExtensionAPI): void {
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         ctx.ui.notify(`Invalid /ralph command: ${message}`, "error");
+        return;
+      }
+
+      if (command.kind === "help") {
+        showRalphHelp(ctx);
         return;
       }
 

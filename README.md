@@ -6,6 +6,7 @@ Ralph-style autonomous planning loops for pi.
 
 ### Concrete usage
 
+- `/ralph` (or `/ralph help`) shows usage
 - `/ralph <plan-file> [progress-file]`
 - `/ralph once <plan-file> [progress-file]`
 - `/ralph unit-tests`
@@ -19,6 +20,8 @@ Ralph-style autonomous planning loops for pi.
 Example forms:
 
 ```text
+/ralph
+/ralph help
 /ralph specs/plan.md
 /ralph once specs/plan.md proposals/progress.md
 /ralph unit-tests --max-iterations 7

@@ -3,12 +3,19 @@ import test from "node:test";
 
 import { defaultProgressPathForPlan, parseRalphCommand } from "../src/command";
 
-test("parseRalphCommand handles status and stop subcommands", () => {
+test("parseRalphCommand handles help, status, and stop subcommands", () => {
+  assert.deepEqual(parseRalphCommand(""), { kind: "help" });
+  assert.deepEqual(parseRalphCommand("   \t  "), { kind: "help" });
+  assert.deepEqual(parseRalphCommand("help"), { kind: "help" });
   assert.deepEqual(parseRalphCommand("status"), { kind: "status" });
   assert.deepEqual(parseRalphCommand("stop"), { kind: "stop" });
 });
 
-test("parseRalphCommand rejects max-iteration flags for status and stop", () => {
+test("parseRalphCommand rejects max-iteration flags for help, status, and stop", () => {
+  assert.throws(
+    () => parseRalphCommand("help -n 2"),
+    /Help does not accept max-iteration options/,
+  );
   assert.throws(
     () => parseRalphCommand("status -n 2"),
     /Status does not accept max-iteration options/,
@@ -19,7 +26,11 @@ test("parseRalphCommand rejects max-iteration flags for status and stop", () => 
   );
 });
 
-test("parseRalphCommand rejects once mode for status and stop", () => {
+test("parseRalphCommand rejects once mode for help, status, and stop", () => {
+  assert.throws(
+    () => parseRalphCommand("once help"),
+    /Help does not accept once mode/,
+  );
   assert.throws(
     () => parseRalphCommand("once status"),
     /Status does not accept once mode/,

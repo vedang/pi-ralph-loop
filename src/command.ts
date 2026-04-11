@@ -5,6 +5,7 @@ import type { RalphBuiltinTarget, RalphRunMode } from "./contract.js";
 export type { RalphBuiltinTarget, RalphRunMode } from "./contract.js";
 
 export type RalphCommand =
+  | { kind: "help" }
   | { kind: "status" }
   | { kind: "stop" }
   | {
@@ -15,6 +16,22 @@ export type RalphCommand =
         | { kind: "file"; planFile: string; progressFile?: string };
       maxIterations: number;
     };
+
+export const RALPH_HELP_TEXT = [
+  "Ralph runs an iterative planning loop from a plan file or built-in target.",
+  "Use `once` for one iteration, `status` to inspect the current loop, and `stop` to stop after the current iteration.",
+  "",
+  "Usage:",
+  "/ralph help             Show this help text",
+  "/ralph <plan-file> [progress-file] [--max-iterations <n>]",
+  "/ralph once <plan-file> [progress-file] [--max-iterations <n>]",
+  "/ralph unit-tests [--max-iterations <n>]",
+  "/ralph once unit-tests [--max-iterations <n>]",
+  "/ralph clean-room [--max-iterations <n>]",
+  "/ralph once clean-room [--max-iterations <n>]",
+  "/ralph status",
+  "/ralph stop",
+].join("\n");
 
 const DEFAULT_MAX_ITERATIONS = 50;
 
@@ -82,28 +99,30 @@ function parseNonStartCommand(
   runMode: RalphRunMode,
   positionals: string[],
   maxIterationsSpecified: boolean,
-): Extract<RalphCommand, { kind: "status" | "stop" }> | null {
-  if (name !== "status" && name !== "stop") {
+): Extract<RalphCommand, { kind: "help" | "status" | "stop" }> | null {
+  if (name !== "help" && name !== "status" && name !== "stop") {
     return null;
   }
 
+  const commandName = name;
+  const capitalizedName =
+    commandName === "help"
+      ? "Help"
+      : commandName === "status"
+        ? "Status"
+        : "Stop";
+
   if (runMode === "once") {
-    throw new Error(
-      `${name === "status" ? "Status" : "Stop"} does not accept once mode`,
-    );
+    throw new Error(`${capitalizedName} does not accept once mode`);
   }
   if (positionals.length !== 1) {
-    throw new Error(
-      `${name === "status" ? "Status" : "Stop"} does not accept positional arguments`,
-    );
+    throw new Error(`${capitalizedName} does not accept positional arguments`);
   }
   if (maxIterationsSpecified) {
-    throw new Error(
-      `${name === "status" ? "Status" : "Stop"} does not accept max-iteration options`,
-    );
+    throw new Error(`${capitalizedName} does not accept max-iteration options`);
   }
 
-  return { kind: name };
+  return { kind: commandName };
 }
 
 function createStartCommand(
@@ -122,7 +141,7 @@ function createStartCommand(
 export function parseRalphCommand(input: string): RalphCommand {
   const trimmed = input.trim();
   if (!trimmed) {
-    throw new Error("Missing /ralph arguments");
+    return { kind: "help" };
   }
 
   const tokens = tokenize(trimmed);
