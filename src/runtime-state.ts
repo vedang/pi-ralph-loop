@@ -18,6 +18,7 @@ export interface RalphPendingCollapse {
   targetId: string;
   iteration: number;
   finalReason: RalphPendingCollapseReason;
+  achievedSummary: string;
 }
 
 export function buildStatusMessage(state: RalphState | null): string {

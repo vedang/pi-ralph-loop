@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 
 import type {
@@ -10,19 +13,54 @@ import type {
 import ralphLoopExtension from "../src/index";
 
 type UserMessageContent = Parameters<ExtensionAPI["sendUserMessage"]>[0];
+type ExtensionHandler = (...args: unknown[]) => Promise<unknown> | unknown;
 
-function createHarness(): {
+function createHarness(cwd = process.cwd()): {
   handler: RegisteredCommand["handler"];
   notifications: Array<{ message: string; level: string }>;
   sentUserMessages: UserMessageContent[];
+  treeSummaries: string[];
+  handlers: Map<string, ExtensionHandler>;
   ctx: ExtensionCommandContext;
 } {
   let handler: RegisteredCommand["handler"] | undefined;
   const sentUserMessages: UserMessageContent[] = [];
   const notifications: Array<{ message: string; level: string }> = [];
+  const treeSummaries: string[] = [];
+  const handlers = new Map<string, ExtensionHandler>();
+
+  const ctx = {
+    cwd,
+    hasUI: true,
+    sessionManager: {
+      getLeafId: () => "leaf-1",
+    },
+    ui: {
+      notify: (message: string, level: string) => {
+        notifications.push({ message, level });
+      },
+      setStatus: () => {},
+    },
+    isIdle: () => true,
+    navigateTree: async (targetId: string) => {
+      const sessionBeforeTree = handlers.get("session_before_tree");
+      const result = await sessionBeforeTree?.(
+        { preparation: { targetId } },
+        ctx,
+      );
+      const summary = (result as { summary?: { summary?: string } } | undefined)
+        ?.summary?.summary;
+      if (summary) {
+        treeSummaries.push(summary);
+      }
+      return { cancelled: false };
+    },
+  } as unknown as ExtensionCommandContext;
 
   const pi = {
-    on: () => {},
+    on: (event: string, registeredHandler: ExtensionHandler) => {
+      handlers.set(event, registeredHandler);
+    },
     registerCommand: (
       _name: string,
       options: Omit<RegisteredCommand, "name" | "sourceInfo">,
@@ -39,17 +77,14 @@ function createHarness(): {
 
   assert.ok(handler, "expected /ralph command to be registered");
 
-  const ctx = {
-    ui: {
-      notify: (message: string, level: string) => {
-        notifications.push({ message, level });
-      },
-      setStatus: () => {},
-    },
-    isIdle: () => true,
-  } as unknown as ExtensionCommandContext;
-
-  return { handler, notifications, sentUserMessages, ctx };
+  return {
+    handler,
+    notifications,
+    sentUserMessages,
+    treeSummaries,
+    handlers,
+    ctx,
+  };
 }
 
 test("/ralph help shows usage text without sending a user message", async () => {
@@ -77,5 +112,36 @@ test("/ralph with no arguments shows the same help text", async () => {
   assert.equal(
     emptyHarness.notifications[0]?.message,
     helpHarness.notifications[0]?.message,
+  );
+});
+
+test("collapsed Ralph iteration summary includes achieved work", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "ralph-loop-summary-"));
+  writeFileSync(join(cwd, "plan.md"), "# Plan\n- Do one task\n", "utf8");
+
+  const harness = createHarness(cwd);
+  await harness.handler("plan.md", harness.ctx);
+
+  const agentEnd = harness.handlers.get("agent_end");
+  assert.ok(agentEnd, "expected agent_end handler to be registered");
+
+  await agentEnd(
+    {
+      messages: [
+        {
+          role: "assistant",
+          content:
+            "Implemented /ralph help and updated command docs.\nVerified tests and checks pass.",
+        },
+      ],
+    },
+    harness.ctx,
+  );
+
+  assert.equal(harness.treeSummaries.length, 1);
+  assert.match(harness.treeSummaries[0] ?? "", /Achieved:/);
+  assert.match(
+    harness.treeSummaries[0] ?? "",
+    /Implemented \/ralph help and updated command docs\./,
   );
 });

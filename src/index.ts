@@ -24,6 +24,7 @@ import {
   type RalphState,
   buildStatusMessage,
 } from "./runtime-state.js";
+import { summarizeIterationAchievement } from "./text.js";
 
 interface RalphStateV2 extends RalphState {
   runMode: RalphRunMode;
@@ -186,6 +187,9 @@ export default function ralphLoopExtension(pi: ExtensionAPI): void {
           state.attachmentPaths.length > 0
             ? `Artifacts: ${state.attachmentPaths.join(", ")}`
             : "",
+          state.pendingCollapse.achievedSummary
+            ? `Achieved: ${state.pendingCollapse.achievedSummary}`
+            : "",
           `Outcome: ${getCollapseOutcome(state.pendingCollapse.finalReason)}`,
         ]
           .filter(Boolean)
@@ -203,7 +207,9 @@ export default function ralphLoopExtension(pi: ExtensionAPI): void {
       return;
     }
 
-    const finalReason = getFinalReason(state, getAssistantText(event.messages));
+    const assistantText = getAssistantText(event.messages);
+    const finalReason = getFinalReason(state, assistantText);
+    const achievedSummary = summarizeIterationAchievement(assistantText);
 
     const targetId = state.iterationAnchorId;
     const commandCtx = state.storedCommandCtx;
@@ -216,6 +222,7 @@ export default function ralphLoopExtension(pi: ExtensionAPI): void {
       targetId,
       iteration: state.iteration,
       finalReason,
+      achievedSummary,
     };
 
     try {
