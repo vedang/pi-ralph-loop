@@ -1,5 +1,6 @@
 # pi-ralph-loop
 
+![pi-ralph-loop banner](images/banner.png)
 Ralph-style autonomous planning loops for pi.
 
 ## Commands
