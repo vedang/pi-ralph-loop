@@ -83,6 +83,7 @@ function createHarness(cwd = process.cwd()): {
   } as unknown as ExtensionAPI;
 
   ralphLoopExtension(pi);
+  void handlers.get("session_start")?.({}, ctx);
 
   assert.ok(commands.get("ralph"), "expected /ralph command to be registered");
   assert.ok(
@@ -127,6 +128,28 @@ function assertSingleNotification(harness: Harness, level: string): string {
 
 function assertNoUserMessages(harness: Harness): void {
   assert.equal(harness.sentUserMessages.length, 0);
+}
+
+function getNotificationMessages(harness: Harness, level?: string): string[] {
+  return harness.notifications
+    .filter((notification) => (level ? notification.level === level : true))
+    .map((notification) => notification.message);
+}
+
+function userMessageToText(content: UserMessageContent | undefined): string {
+  if (typeof content === "string") {
+    return content;
+  }
+
+  if (!Array.isArray(content)) {
+    return "";
+  }
+
+  return content
+    .map((block) =>
+      "text" in block && typeof block.text === "string" ? block.text : "",
+    )
+    .join("\n");
 }
 
 function createPromptCommandFixture(): string {
@@ -219,16 +242,32 @@ test("collapsed Ralph iteration summary includes achieved work", async () => {
   );
 });
 
-test("/ralph-prompt creates a prompt-seeded task folder without starting the loop", async () => {
+test("/ralph-prompt creates prompt artifacts and starts one synthesis iteration", async () => {
   const cwd = createPromptCommandFixture();
 
   const harness = createHarness(cwd);
   await runCommand(harness, "ralph-prompt", "improve command parsing coverage");
 
-  assertNoUserMessages(harness);
-  const message = assertSingleNotification(harness, "info");
-  assert.match(message, /Created Ralph prompt plan:/);
-  assert.match(message, /Next: `\/ralph /);
+  assert.equal(harness.sentUserMessages.length, 1);
+  const [iterationPrompt] = harness.sentUserMessages;
+  const iterationPromptText = userMessageToText(iterationPrompt);
+  assert.match(
+    iterationPromptText,
+    /Rewrite `plan\.md` into detailed, self-contained Ralph execution plan/,
+  );
+  assert.match(
+    iterationPromptText,
+    /Do not implement underlying repository task yet\./,
+  );
+  assert.match(iterationPromptText, /Keep `progress\.md` minimal\./);
+
+  const infoMessages = getNotificationMessages(harness, "info");
+  assert.ok(
+    infoMessages.some((message) => /Created Ralph prompt plan:/.test(message)),
+  );
+  assert.ok(infoMessages.some((message) => /Ralph loop: active/.test(message)));
+  assert.ok(infoMessages.some((message) => /Target: prompt/.test(message)));
+  assert.ok(infoMessages.some((message) => /Iteration: 1\/1/.test(message)));
 
   const plansRoot = join(cwd, ".agents", "plans");
   const [taskFolder] = readdirSync(plansRoot);
@@ -244,9 +283,16 @@ test("/ralph-prompt creates a prompt-seeded task folder without starting the loo
   assert.ok(existsSync(progressFilePath));
 
   const plan = readFileSync(planFilePath, "utf8");
-  assert.match(plan, /## User Prompt/);
+  assert.match(plan, /## Original User Prompt/);
   assert.match(plan, /improve command parsing coverage/);
+  assert.match(plan, /## Meta-pass Deliverable/);
   assert.match(plan, /## Initial Investigation/);
   assert.match(plan, /src\/command\.ts/);
   assert.match(plan, /__tests__\/command\.test\.ts/);
+
+  const progress = readFileSync(progressFilePath, "utf8");
+  assert.match(
+    progress,
+    /Reserved for later `\/ralph <plan\.md>` execution history/,
+  );
 });

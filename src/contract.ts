@@ -1,5 +1,12 @@
 export type RalphBuiltinTarget = "unit-tests" | "clean-room";
-export type RalphTargetName = RalphBuiltinTarget | "custom";
+
+export const RALPH_CUSTOM_TARGET = "custom" as const;
+export const RALPH_PROMPT_TARGET = "prompt" as const;
+
+export type RalphTargetName =
+  | RalphBuiltinTarget
+  | typeof RALPH_CUSTOM_TARGET
+  | typeof RALPH_PROMPT_TARGET;
 
 export type RalphRunMode = "loop" | "once";
 export type RalphStopReason =

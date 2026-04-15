@@ -12,7 +12,7 @@ import test from "node:test";
 
 import { seedPromptTarget } from "../src/prompt-target";
 
-test("seedPromptTarget creates workflow-native prompt artifacts with repo investigation", () => {
+test("seedPromptTarget creates meta-prompt artifacts with repo investigation", () => {
   const cwd = mkdtempSync(join(tmpdir(), "ralph-loop-prompt-target-"));
   mkdirSync(join(cwd, "src"), { recursive: true });
   mkdirSync(join(cwd, "__tests__"), { recursive: true });
@@ -65,15 +65,27 @@ test("seedPromptTarget creates workflow-native prompt artifacts with repo invest
 
   const plan = readFileSync(seeded.planFilePath, "utf8");
   assert.match(plan, /^# Plan: Ralph prompt/m);
-  assert.match(plan, /## User Prompt/);
+  assert.match(plan, /## Goal/);
+  assert.match(plan, /## Original User Prompt/);
   assert.match(plan, /improve command parsing coverage/);
+  assert.match(plan, /## Meta-pass Deliverable/);
+  assert.match(
+    plan,
+    /Rewrite `plan\.md` into detailed, self-contained Ralph execution plan/,
+  );
+  assert.match(plan, /Do not implement underlying repository task yet\./);
+  assert.match(plan, /Leave `progress\.md` minimal/);
   assert.match(plan, /## Initial Investigation/);
   assert.match(plan, /src\/command\.ts/);
   assert.match(plan, /__tests__\/command\.test\.ts/);
-  assert.match(plan, /ONLY WORK ON A SINGLE TASK PER ITERATION\./);
-  assert.match(plan, /make test`, `make check`, `make format`/);
+  assert.match(plan, /## Requirements For Rewritten Plan/);
+  assert.match(plan, /Preserve explicit user constraints/);
+  assert.match(plan, /## Meta-pass Rules/);
 
   const progress = readFileSync(seeded.progressFilePath, "utf8");
   assert.match(progress, /# Progress: Ralph prompt/);
-  assert.match(progress, /Seeded prompt-plan artifacts/);
+  assert.match(
+    progress,
+    /Reserved for later `\/ralph <plan\.md>` execution history/,
+  );
 });

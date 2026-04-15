@@ -7,7 +7,7 @@ import {
 } from "node:fs";
 import { join, relative, resolve } from "node:path";
 
-import { SHARED_RULE_LINES, formatTaskTimestamp } from "./targets.js";
+import { formatTaskTimestamp } from "./targets.js";
 
 export interface SeedPromptTargetOptions {
   cwd: string;
@@ -188,10 +188,16 @@ function buildPromptPlanTemplate(
     "# Plan: Ralph prompt",
     "",
     "## Goal",
-    "Turn the user prompt into completed repository work, using this plan and `progress.md` as the durable loop state.",
+    "Use one prompt-synthesis pass to turn the original user prompt into a detailed, repo-aware Ralph execution plan saved in this same `plan.md`.",
     "",
-    "## User Prompt",
+    "## Original User Prompt",
     normalizedPrompt || "(missing prompt text)",
+    "",
+    "## Meta-pass Deliverable",
+    "- Rewrite `plan.md` into detailed, self-contained Ralph execution plan for later `/ralph <plan.md>` use.",
+    "- Preserve explicit user constraints from the original prompt.",
+    "- Do not implement underlying repository task yet.",
+    "- Leave `progress.md` minimal.",
     "",
     "## Initial Investigation",
     "- Workspace scan used only local filesystem data.",
@@ -200,26 +206,26 @@ function buildPromptPlanTemplate(
     "- Additional project markers discovered:",
     ...toIndentedBulletLines(rootMarkers),
     "",
-    "## Suggested Workflow",
-    "- Start by reading the likely relevant files above and refining scope in `progress.md`.",
-    "- Convert the prompt into concrete acceptance criteria before making changes.",
-    "- If behavior changes or bugs are involved, add or update tests before implementation.",
-    "- Make the smallest code or docs changes that satisfy the prompt.",
-    "- Run `make test`, `make check`, and `make format` before marking work complete.",
+    "## Requirements For Rewritten Plan",
+    "- Preserve explicit user constraints while rewriting the prompt into actionable Ralph tasks.",
+    "- Make the final plan self-contained so later `/ralph <plan.md>` execution does not need this meta-pass context.",
+    "- Keep scope, acceptance checks, and likely file targets explicit per iteration.",
+    "- Call out any referenced external repositories or local paths that later execution should inspect.",
     "",
-    "## Ralph Loop Rules",
-    ...SHARED_RULE_LINES,
+    "## Meta-pass Rules",
+    "- Read code and docs needed to understand the request before rewriting the plan.",
+    "- Rewrite `plan.md` only; avoid unrelated repository changes.",
+    "- Leave `progress.md` minimal so later `/ralph <plan.md>` execution starts cleanly.",
+    "- Do not create implementation commits during this prompt-synthesis pass.",
     "",
     "## Completion Criteria",
-    "- The user prompt is satisfied in this repository.",
-    "- Relevant automated checks pass.",
-    "- `progress.md` records the important decisions and completed work.",
-    "- Output `<COMPLETE>` on a line by itself when everything is done.",
+    "- Rewritten `plan.md` is detailed enough to execute as a full `/ralph <plan.md>` loop.",
+    "- The plan is self-contained and no longer depends on this original chat message.",
     "",
   ].join("\n");
 }
 
-function buildPromptProgressTemplate(promptText: string): string {
+function buildPromptProgressTemplate(): string {
   return [
     "# Progress: Ralph prompt",
     "",
@@ -227,7 +233,7 @@ function buildPromptProgressTemplate(promptText: string): string {
     "in progress",
     "",
     "## Iterations",
-    `- Seeded prompt-plan artifacts from user prompt: ${promptText.trim() || "(missing prompt text)"}`,
+    "- Reserved for later `/ralph <plan.md>` execution history.",
     "",
   ].join("\n");
 }
@@ -260,11 +266,7 @@ export function seedPromptTarget(
     buildPromptPlanTemplate(options.promptText, investigationPaths),
     "utf8",
   );
-  writeFileSync(
-    progressFilePath,
-    buildPromptProgressTemplate(options.promptText),
-    "utf8",
-  );
+  writeFileSync(progressFilePath, buildPromptProgressTemplate(), "utf8");
 
   return {
     taskDir,

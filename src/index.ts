@@ -14,14 +14,21 @@ import {
 import {
   RALPH_ANCHOR_MESSAGE_TYPE,
   RALPH_FINAL_REASON_MESSAGES,
+  RALPH_PROMPT_TARGET,
   RALPH_STATUS_KEY,
   type RalphRunMode,
   type RalphStopReason,
 } from "./contract.js";
 import { getCollapseOutcome, getFinalReason } from "./loop-policy.js";
-import { seedPromptTarget } from "./prompt-target.js";
+import {
+  type SeedPromptTargetResult,
+  seedPromptTarget,
+} from "./prompt-target.js";
 import { buildIterationPrompt, buildRalphSystemPrompt } from "./prompt.js";
-import { resolveStartCommand } from "./runtime-start.js";
+import {
+  type ResolvedRalphStart,
+  resolveStartCommand,
+} from "./runtime-start.js";
 import {
   type RalphPendingCollapse,
   type RalphState,
@@ -35,6 +42,9 @@ interface RalphStateV2 extends RalphState {
   storedCommandCtx: ExtensionCommandContext | null;
   pendingCollapse: RalphPendingCollapse | null;
 }
+
+const RALPH_BUSY_ERROR =
+  "Agent is busy. Wait for the current turn to finish before starting Ralph.";
 
 let state: RalphStateV2 | null = null;
 
@@ -85,6 +95,15 @@ function updateStatus(ctx: ExtensionContext | undefined): void {
 function clearState(ctx?: ExtensionContext): void {
   state = null;
   updateStatus(ctx);
+}
+
+function notifyIfBusy(ctx: ExtensionCommandContext): boolean {
+  if (ctx.isIdle()) {
+    return false;
+  }
+
+  ctx.ui.notify(RALPH_BUSY_ERROR, "error");
+  return true;
 }
 
 function showRalphHelp(ctx: ExtensionContext): void {
@@ -138,8 +157,35 @@ function startIteration(ctx: ExtensionContext, pi: ExtensionAPI): void {
       planFilePath: state.planFilePath,
       progressFilePath: state.progressFilePath,
       attachmentPaths: state.attachmentPaths,
+      promptSynthesis: state.targetName === RALPH_PROMPT_TARGET,
     }),
   );
+}
+
+function startRalphLoop(
+  ctx: ExtensionCommandContext,
+  pi: ExtensionAPI,
+  resolved: ResolvedRalphStart,
+  runMode: RalphRunMode,
+  maxIterations: number,
+): void {
+  state = {
+    active: true,
+    stopping: false,
+    runMode,
+    iteration: 1,
+    maxIterations,
+    targetName: resolved.targetName,
+    planFilePath: resolved.planFilePath,
+    progressFilePath: resolved.progressFilePath,
+    attachmentPaths: resolved.attachmentPaths,
+    iterationAnchorId: null,
+    storedCommandCtx: ctx,
+    pendingCollapse: null,
+  };
+  updateStatus(ctx);
+  ctx.ui.notify(buildStatusMessage(state), "info");
+  startIteration(ctx, pi);
 }
 
 function formatError(error: unknown): string {
@@ -149,28 +195,17 @@ function formatError(error: unknown): string {
 function handlePromptCommand(
   ctx: ExtensionCommandContext,
   promptText: string,
-): void {
+): SeedPromptTargetResult {
   const normalizedPrompt = promptText.trim();
   if (!normalizedPrompt) {
     throw new Error("Prompt requires user prompt text after `/ralph-prompt`");
   }
 
-  const seeded = seedPromptTarget({
+  return seedPromptTarget({
     cwd: ctx.cwd,
     promptText: normalizedPrompt,
     now: new Date(),
   });
-  const planPath = relative(ctx.cwd, seeded.planFilePath);
-  const progressPath = relative(ctx.cwd, seeded.progressFilePath);
-
-  ctx.ui.notify(
-    [
-      `Created Ralph prompt plan: ${planPath}`,
-      `Progress: ${progressPath}`,
-      `Next: \`/ralph ${planPath}\``,
-    ].join("\n"),
-    "info",
-  );
 }
 
 export default function ralphLoopExtension(pi: ExtensionAPI): void {
@@ -198,6 +233,7 @@ export default function ralphLoopExtension(pi: ExtensionAPI): void {
         maxIterations: state.maxIterations,
         planFilePath: state.planFilePath,
         progressFilePath: state.progressFilePath,
+        promptSynthesis: state.targetName === RALPH_PROMPT_TARGET,
       }),
     };
   });
@@ -362,11 +398,7 @@ export default function ralphLoopExtension(pi: ExtensionAPI): void {
         return;
       }
 
-      if (!ctx.isIdle()) {
-        ctx.ui.notify(
-          "Agent is busy. Wait for the current turn to finish before starting Ralph.",
-          "error",
-        );
+      if (notifyIfBusy(ctx)) {
         return;
       }
 
@@ -375,23 +407,13 @@ export default function ralphLoopExtension(pi: ExtensionAPI): void {
         const effectiveMaxIterations =
           command.runMode === "once" ? 1 : command.maxIterations;
 
-        state = {
-          active: true,
-          stopping: false,
-          runMode: command.runMode,
-          iteration: 1,
-          maxIterations: effectiveMaxIterations,
-          targetName: resolved.targetName,
-          planFilePath: resolved.planFilePath,
-          progressFilePath: resolved.progressFilePath,
-          attachmentPaths: resolved.attachmentPaths,
-          iterationAnchorId: null,
-          storedCommandCtx: ctx,
-          pendingCollapse: null,
-        };
-        updateStatus(ctx);
-        ctx.ui.notify(buildStatusMessage(state), "info");
-        startIteration(ctx, pi);
+        startRalphLoop(
+          ctx,
+          pi,
+          resolved,
+          command.runMode,
+          effectiveMaxIterations,
+        );
       } catch (error) {
         clearState(ctx);
         ctx.ui.notify(
@@ -405,8 +427,44 @@ export default function ralphLoopExtension(pi: ExtensionAPI): void {
   pi.registerCommand("ralph-prompt", {
     description: "Create a Ralph prompt plan",
     handler: async (args, ctx) => {
+      if (state?.active) {
+        ctx.ui.notify(
+          "Ralph loop already active. Use `/ralph stop` first.",
+          "error",
+        );
+        return;
+      }
+
+      if (notifyIfBusy(ctx)) {
+        return;
+      }
+
       try {
-        handlePromptCommand(ctx, args);
+        const seeded = handlePromptCommand(ctx, args);
+        const planPath = relative(ctx.cwd, seeded.planFilePath);
+        const progressPath = relative(ctx.cwd, seeded.progressFilePath);
+
+        ctx.ui.notify(
+          [
+            `Created Ralph prompt plan: ${planPath}`,
+            `Progress: ${progressPath}`,
+            `After this synthesis pass, run: \`/ralph ${planPath}\``,
+          ].join("\n"),
+          "info",
+        );
+
+        startRalphLoop(
+          ctx,
+          pi,
+          {
+            targetName: RALPH_PROMPT_TARGET,
+            planFilePath: seeded.planFilePath,
+            progressFilePath: seeded.progressFilePath,
+            attachmentPaths: [],
+          },
+          "once",
+          1,
+        );
       } catch (error) {
         ctx.ui.notify(
           `Failed to create prompt plan: ${formatError(error)}`,

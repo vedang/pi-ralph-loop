@@ -4,7 +4,7 @@ import { dirname, resolve } from "node:path";
 import type { ExtensionCommandContext } from "@mariozechner/pi-coding-agent";
 
 import { type RalphCommand, defaultProgressPathForPlan } from "./command.js";
-import type { RalphTargetName } from "./contract.js";
+import { RALPH_CUSTOM_TARGET, type RalphTargetName } from "./contract.js";
 import { buildProgressTemplate, seedBuiltinTarget } from "./targets.js";
 
 export interface ResolvedRalphStart {
@@ -14,16 +14,17 @@ export interface ResolvedRalphStart {
   attachmentPaths: string[];
 }
 
-function ensureProgressFile(
-  progressFilePath: string,
-  targetName: RalphTargetName,
-): void {
+function ensureProgressFile(progressFilePath: string): void {
   if (existsSync(progressFilePath)) {
     return;
   }
 
   mkdirSync(dirname(progressFilePath), { recursive: true });
-  writeFileSync(progressFilePath, buildProgressTemplate(targetName), "utf8");
+  writeFileSync(
+    progressFilePath,
+    buildProgressTemplate(RALPH_CUSTOM_TARGET),
+    "utf8",
+  );
 }
 
 export function resolveStartCommand(
@@ -54,10 +55,10 @@ export function resolveStartCommand(
     command.source.progressFile ??
       defaultProgressPathForPlan(command.source.planFile),
   );
-  ensureProgressFile(progressFilePath, "custom");
+  ensureProgressFile(progressFilePath);
 
   return {
-    targetName: "custom",
+    targetName: RALPH_CUSTOM_TARGET,
     planFilePath,
     progressFilePath,
     attachmentPaths: [],

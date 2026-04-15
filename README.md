@@ -37,6 +37,7 @@ Example forms:
 ## Behavior
 
 - `/ralph once ...` runs exactly one iteration and then stops after collapsing that iteration.
+- `/ralph-prompt <prompt>` seeds a prompt-synthesis pass (`prompt` target) and auto-starts exactly one iteration.
 - Ralph works one iteration at a time.
 - Each iteration prompt explicitly requires:
   - running relevant feedback loops before finishing,
@@ -81,11 +82,6 @@ Creates a Ralph task folder with:
 - `plan.md`
 - `progress.md`
 
-The generated `plan.md` captures:
+`/ralph-prompt` seeds a synthesis `plan.md` and keeps `progress.md` minimal. It starts one prompt-specific iteration that rewrites `plan.md` into a self-contained execution plan for later `/ralph <plan.md>` use.
 
-- the user prompt,
-- an initial local-filesystem investigation of likely relevant files,
-- Ralph loop rules,
-- and a suggested workflow for turning the prompt into a completed change.
-
-Use the generated plan with `/ralph <plan-file>` when you want the loop to execute against it.
+Use the rewritten plan with `/ralph <plan.md>` when you want the loop to execute against it.
