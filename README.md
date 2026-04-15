@@ -16,6 +16,7 @@ Ralph-style autonomous planning loops for pi.
 - `/ralph [once] <target> --max-iterations <n>`
 - `/ralph status`
 - `/ralph stop`
+- `/ralph-prompt <prompt>`
 
 Example forms:
 
@@ -28,6 +29,7 @@ Example forms:
 /ralph once unit-tests
 /ralph clean-room
 /ralph once clean-room
+/ralph-prompt improve command parsing coverage
 /ralph status
 /ralph stop
 ```
@@ -71,3 +73,19 @@ Creates a Ralph task folder with:
 - `spec.md`
 
 The generated plan drives an autonomous loop that reads the current repository and incrementally builds a clean-room `spec.md` suitable for an independent implementation in another language.
+
+### `/ralph-prompt <prompt>`
+
+Creates a Ralph task folder with:
+
+- `plan.md`
+- `progress.md`
+
+The generated `plan.md` captures:
+
+- the user prompt,
+- an initial local-filesystem investigation of likely relevant files,
+- Ralph loop rules,
+- and a suggested workflow for turning the prompt into a completed change.
+
+Use the generated plan with `/ralph <plan-file>` when you want the loop to execute against it.

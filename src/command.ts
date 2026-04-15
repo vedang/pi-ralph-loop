@@ -17,6 +17,12 @@ export type RalphCommand =
       maxIterations: number;
     };
 
+const NON_START_COMMAND_LABEL: Record<"help" | "status" | "stop", string> = {
+  help: "Help",
+  status: "Status",
+  stop: "Stop",
+};
+
 export const RALPH_HELP_TEXT = [
   "Ralph runs an iterative planning loop from a plan file or built-in target.",
   "Use `once` for one iteration, `status` to inspect the current loop, and `stop` to stop after the current iteration.",
@@ -29,6 +35,9 @@ export const RALPH_HELP_TEXT = [
   "/ralph once unit-tests [--max-iterations <n>]",
   "/ralph clean-room [--max-iterations <n>]",
   "/ralph once clean-room [--max-iterations <n>]",
+  "",
+  "Use `/ralph-prompt <prompt>` to create a prompt-seeded plan.",
+  "",
   "/ralph status",
   "/ralph stop",
 ].join("\n");
@@ -100,29 +109,24 @@ function parseNonStartCommand(
   positionals: string[],
   maxIterationsSpecified: boolean,
 ): Extract<RalphCommand, { kind: "help" | "status" | "stop" }> | null {
-  if (name !== "help" && name !== "status" && name !== "stop") {
+  if (!name || !Object.hasOwn(NON_START_COMMAND_LABEL, name)) {
     return null;
   }
 
-  const commandName = name;
-  const capitalizedName =
-    commandName === "help"
-      ? "Help"
-      : commandName === "status"
-        ? "Status"
-        : "Stop";
+  const command = name as keyof typeof NON_START_COMMAND_LABEL;
+  const displayName = NON_START_COMMAND_LABEL[command];
 
   if (runMode === "once") {
-    throw new Error(`${capitalizedName} does not accept once mode`);
+    throw new Error(`${displayName} does not accept once mode`);
   }
   if (positionals.length !== 1) {
-    throw new Error(`${capitalizedName} does not accept positional arguments`);
+    throw new Error(`${displayName} does not accept positional arguments`);
   }
   if (maxIterationsSpecified) {
-    throw new Error(`${capitalizedName} does not accept max-iteration options`);
+    throw new Error(`${displayName} does not accept max-iteration options`);
   }
 
-  return { kind: commandName };
+  return { kind: command };
 }
 
 function createStartCommand(
@@ -145,10 +149,15 @@ export function parseRalphCommand(input: string): RalphCommand {
   }
 
   const tokens = tokenize(trimmed);
+
   const positionals: string[] = [];
   let maxIterations = DEFAULT_MAX_ITERATIONS;
   let maxIterationsSpecified = false;
-  let runMode: RalphRunMode = "loop";
+
+  const setMaxIterations = (value: string, optionName: string): void => {
+    maxIterations = parseMaxIterations(value, optionName);
+    maxIterationsSpecified = true;
+  };
 
   for (let index = 0; index < tokens.length; index += 1) {
     const token = tokens[index] ?? "";
@@ -158,24 +167,21 @@ export function parseRalphCommand(input: string): RalphCommand {
       if (!value) {
         throw new Error(`Expected value after ${token}`);
       }
-      maxIterations = parseMaxIterations(value, token);
-      maxIterationsSpecified = true;
+      setMaxIterations(value, token);
       index += 1;
       continue;
     }
 
     if (token.startsWith("-n") && token.length > 2) {
-      maxIterations = parseMaxIterations(token.slice(2), "-n");
-      maxIterationsSpecified = true;
+      setMaxIterations(token.slice(2), "-n");
       continue;
     }
 
     if (token.startsWith("--max-iterations=")) {
-      maxIterations = parseMaxIterations(
+      setMaxIterations(
         token.slice("--max-iterations=".length),
         "--max-iterations",
       );
-      maxIterationsSpecified = true;
       continue;
     }
 
@@ -187,8 +193,8 @@ export function parseRalphCommand(input: string): RalphCommand {
   }
 
   const onceRequested = positionals[0]?.toLowerCase() === "once";
+  const runMode: RalphRunMode = onceRequested ? "once" : "loop";
   if (onceRequested) {
-    runMode = "once";
     positionals.shift();
   }
 
@@ -197,6 +203,7 @@ export function parseRalphCommand(input: string): RalphCommand {
   }
 
   const first = positionals[0]?.toLowerCase();
+
   const nonStartCommand = parseNonStartCommand(
     first,
     runMode,

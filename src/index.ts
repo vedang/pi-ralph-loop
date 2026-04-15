@@ -1,3 +1,5 @@
+import { relative } from "node:path";
+
 import type {
   ExtensionAPI,
   ExtensionCommandContext,
@@ -17,6 +19,7 @@ import {
   type RalphStopReason,
 } from "./contract.js";
 import { getCollapseOutcome, getFinalReason } from "./loop-policy.js";
+import { seedPromptTarget } from "./prompt-target.js";
 import { buildIterationPrompt, buildRalphSystemPrompt } from "./prompt.js";
 import { resolveStartCommand } from "./runtime-start.js";
 import {
@@ -136,6 +139,37 @@ function startIteration(ctx: ExtensionContext, pi: ExtensionAPI): void {
       progressFilePath: state.progressFilePath,
       attachmentPaths: state.attachmentPaths,
     }),
+  );
+}
+
+function formatError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function handlePromptCommand(
+  ctx: ExtensionCommandContext,
+  promptText: string,
+): void {
+  const normalizedPrompt = promptText.trim();
+  if (!normalizedPrompt) {
+    throw new Error("Prompt requires user prompt text after `/ralph-prompt`");
+  }
+
+  const seeded = seedPromptTarget({
+    cwd: ctx.cwd,
+    promptText: normalizedPrompt,
+    now: new Date(),
+  });
+  const planPath = relative(ctx.cwd, seeded.planFilePath);
+  const progressPath = relative(ctx.cwd, seeded.progressFilePath);
+
+  ctx.ui.notify(
+    [
+      `Created Ralph prompt plan: ${planPath}`,
+      `Progress: ${progressPath}`,
+      `Next: \`/ralph ${planPath}\``,
+    ].join("\n"),
+    "info",
   );
 }
 
@@ -282,40 +316,42 @@ export default function ralphLoopExtension(pi: ExtensionAPI): void {
       try {
         command = parseRalphCommand(args);
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        ctx.ui.notify(`Invalid /ralph command: ${message}`, "error");
+        ctx.ui.notify(`Invalid /ralph command: ${formatError(error)}`, "error");
         return;
       }
 
-      if (command.kind === "help") {
-        showRalphHelp(ctx);
-        return;
-      }
+      switch (command.kind) {
+        case "help":
+          showRalphHelp(ctx);
+          return;
 
-      if (command.kind === "status") {
-        ctx.ui.notify(buildStatusMessage(state), "info");
-        updateStatus(ctx);
-        return;
-      }
+        case "status":
+          ctx.ui.notify(buildStatusMessage(state), "info");
+          updateStatus(ctx);
+          return;
 
-      if (command.kind === "stop") {
-        if (!state?.active) {
-          ctx.ui.notify("Ralph loop is not active.", "info");
+        case "stop": {
+          if (!state?.active) {
+            ctx.ui.notify("Ralph loop is not active.", "info");
+            return;
+          }
+
+          if (ctx.isIdle()) {
+            finalizeLoop(ctx, "stop");
+            return;
+          }
+
+          state.stopping = true;
+          ctx.ui.notify(
+            "Ralph loop will stop after the current iteration completes.",
+            "info",
+          );
+          updateStatus(ctx);
           return;
         }
 
-        if (ctx.isIdle()) {
-          finalizeLoop(ctx, "stop");
-          return;
-        }
-
-        state.stopping = true;
-        ctx.ui.notify(
-          "Ralph loop will stop after the current iteration completes.",
-          "info",
-        );
-        updateStatus(ctx);
-        return;
+        case "start":
+          break;
       }
 
       if (state?.active) {
@@ -357,9 +393,25 @@ export default function ralphLoopExtension(pi: ExtensionAPI): void {
         ctx.ui.notify(buildStatusMessage(state), "info");
         startIteration(ctx, pi);
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
         clearState(ctx);
-        ctx.ui.notify(`Failed to start Ralph loop: ${message}`, "error");
+        ctx.ui.notify(
+          `Failed to start Ralph loop: ${formatError(error)}`,
+          "error",
+        );
+      }
+    },
+  });
+
+  pi.registerCommand("ralph-prompt", {
+    description: "Create a Ralph prompt plan",
+    handler: async (args, ctx) => {
+      try {
+        handlePromptCommand(ctx, args);
+      } catch (error) {
+        ctx.ui.notify(
+          `Failed to create prompt plan: ${formatError(error)}`,
+          "error",
+        );
       }
     },
   });

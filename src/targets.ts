@@ -55,7 +55,7 @@ export function buildProgressTemplate(
   ].join("\n");
 }
 
-const SHARED_RULE_LINES = [
+export const SHARED_RULE_LINES = [
   `- ${RALPH_SINGLE_TASK_RULE}`,
   "- Run relevant feedback loops (`make test`, `make check`, `make format`) before considering a task complete.",
   "- Do not consider a task complete while relevant feedback loops are failing.",
