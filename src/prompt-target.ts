@@ -54,9 +54,13 @@ const SKIP_DIRS = new Set([
   "coverage",
 ]);
 
+function extractPromptTokens(promptText: string): string[] {
+  return promptText.toLowerCase().match(/[a-z0-9]+/g) ?? [];
+}
+
 function promptTaskSlug(promptText: string): string {
   const [primary = "prompt", secondary = "plan"] =
-    promptText.toLowerCase().match(/[a-z0-9]+/g) ?? [];
+    extractPromptTokens(promptText);
 
   return `${primary}-${secondary}`;
 }
@@ -127,7 +131,7 @@ function selectRelevantInvestigationPaths(
 ): string[] {
   const keywords = Array.from(
     new Set(
-      (promptText.toLowerCase().match(/[a-z0-9]+/g) ?? []).filter((word) => {
+      extractPromptTokens(promptText).filter((word) => {
         return word.length >= 3 && !PROMPT_STOP_WORDS.has(word);
       }),
     ),

@@ -106,6 +106,22 @@ function notifyIfBusy(ctx: ExtensionCommandContext): boolean {
   return true;
 }
 
+function isPromptSynthesisLoop(): boolean {
+  return state?.targetName === RALPH_PROMPT_TARGET;
+}
+
+function ensureCanStartLoop(ctx: ExtensionCommandContext): boolean {
+  if (state?.active) {
+    ctx.ui.notify(
+      "Ralph loop already active. Use `/ralph stop` first.",
+      "error",
+    );
+    return false;
+  }
+
+  return !notifyIfBusy(ctx);
+}
+
 function showRalphHelp(ctx: ExtensionContext): void {
   ctx.ui.notify(RALPH_HELP_TEXT, "info");
 }
@@ -157,7 +173,7 @@ function startIteration(ctx: ExtensionContext, pi: ExtensionAPI): void {
       planFilePath: state.planFilePath,
       progressFilePath: state.progressFilePath,
       attachmentPaths: state.attachmentPaths,
-      promptSynthesis: state.targetName === RALPH_PROMPT_TARGET,
+      promptSynthesis: isPromptSynthesisLoop(),
     }),
   );
 }
@@ -233,7 +249,7 @@ export default function ralphLoopExtension(pi: ExtensionAPI): void {
         maxIterations: state.maxIterations,
         planFilePath: state.planFilePath,
         progressFilePath: state.progressFilePath,
-        promptSynthesis: state.targetName === RALPH_PROMPT_TARGET,
+        promptSynthesis: isPromptSynthesisLoop(),
       }),
     };
   });
@@ -279,12 +295,13 @@ export default function ralphLoopExtension(pi: ExtensionAPI): void {
 
     const assistantText = getAssistantText(event.messages);
     const finalReason = getFinalReason(state, assistantText);
+    const finalReasonOrError = finalReason ?? "error";
     const achievedSummary = summarizeIterationAchievement(assistantText);
 
     const targetId = state.iterationAnchorId;
     const commandCtx = state.storedCommandCtx;
     if (!targetId || !commandCtx) {
-      finalizeLoop(ctx, finalReason ?? "error");
+      finalizeLoop(ctx, finalReasonOrError);
       return;
     }
 
@@ -300,7 +317,7 @@ export default function ralphLoopExtension(pi: ExtensionAPI): void {
         summarize: true,
       });
       if (result.cancelled) {
-        finalizeLoop(ctx, finalReason ?? "error");
+        finalizeLoop(ctx, finalReasonOrError);
         return;
       }
     } catch (error) {
@@ -308,7 +325,7 @@ export default function ralphLoopExtension(pi: ExtensionAPI): void {
         const message = error instanceof Error ? error.message : String(error);
         ctx.ui.notify(`Ralph collapse failed: ${message}`, "error");
       }
-      finalizeLoop(ctx, finalReason ?? "error");
+      finalizeLoop(ctx, finalReasonOrError);
       return;
     } finally {
       if (state) {
@@ -390,15 +407,7 @@ export default function ralphLoopExtension(pi: ExtensionAPI): void {
           break;
       }
 
-      if (state?.active) {
-        ctx.ui.notify(
-          "Ralph loop already active. Use `/ralph stop` first.",
-          "error",
-        );
-        return;
-      }
-
-      if (notifyIfBusy(ctx)) {
+      if (!ensureCanStartLoop(ctx)) {
         return;
       }
 
@@ -427,15 +436,7 @@ export default function ralphLoopExtension(pi: ExtensionAPI): void {
   pi.registerCommand("ralph-prompt", {
     description: "Create a Ralph prompt plan",
     handler: async (args, ctx) => {
-      if (state?.active) {
-        ctx.ui.notify(
-          "Ralph loop already active. Use `/ralph stop` first.",
-          "error",
-        );
-        return;
-      }
-
-      if (notifyIfBusy(ctx)) {
+      if (!ensureCanStartLoop(ctx)) {
         return;
       }
 
