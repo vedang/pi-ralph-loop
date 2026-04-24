@@ -2,6 +2,16 @@
 
 Ralph-style autonomous planning loops for pi.
 
+## Install
+
+```bash
+# Install globally
+pi install git:github.com/vedang/pi-ralph-loop
+
+# Or install for just the current project
+pi install -l git:github.com/vedang/pi-ralph-loop
+```
+
 ## Commands
 
 ### Concrete usage
