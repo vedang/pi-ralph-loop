@@ -227,7 +227,7 @@ test("collapsed Ralph iteration summary includes achieved work", async () => {
         {
           role: "assistant",
           content:
-            "Implemented /ralph help and updated command docs.\nVerified tests and checks pass.",
+            "Implemented /ralph help and updated command docs.\nVerified tests and checks pass.\nDocumented release notes.",
         },
       ],
     },
@@ -235,11 +235,16 @@ test("collapsed Ralph iteration summary includes achieved work", async () => {
   );
 
   assert.equal(harness.treeSummaries.length, 1);
-  assert.match(harness.treeSummaries[0] ?? "", /Achieved:/);
-  assert.match(
-    harness.treeSummaries[0] ?? "",
-    /Implemented \/ralph help and updated command docs\./,
+  const summary = harness.treeSummaries[0] ?? "";
+  assert.match(summary, /Outcome:/);
+  assert.match(summary, /Achieved:/);
+  assert.ok(
+    summary.indexOf("Outcome:") < summary.indexOf("Achieved:"),
+    "expected Outcome to appear before Achieved",
   );
+  assert.match(summary, /Implemented \/ralph help and updated command docs\./);
+  assert.match(summary, /Verified tests and checks pass\./);
+  assert.match(summary, /Documented release notes\./);
 });
 
 test("/ralph-prompt creates prompt artifacts and starts one synthesis iteration", async () => {

@@ -34,7 +34,7 @@ import {
   type RalphState,
   buildStatusMessage,
 } from "./runtime-state.js";
-import { summarizeIterationAchievement } from "./text.js";
+import { stripStandaloneCompleteSigil } from "./text.js";
 
 interface RalphStateV2 extends RalphState {
   runMode: RalphRunMode;
@@ -273,10 +273,10 @@ export default function ralphLoopExtension(pi: ExtensionAPI): void {
           state.attachmentPaths.length > 0
             ? `Artifacts: ${state.attachmentPaths.join(", ")}`
             : "",
+          `Outcome: ${getCollapseOutcome(state.pendingCollapse.finalReason)}`,
           state.pendingCollapse.achievedSummary
             ? `Achieved: ${state.pendingCollapse.achievedSummary}`
             : "",
-          `Outcome: ${getCollapseOutcome(state.pendingCollapse.finalReason)}`,
         ]
           .filter(Boolean)
           .join("\n"),
@@ -296,7 +296,7 @@ export default function ralphLoopExtension(pi: ExtensionAPI): void {
     const assistantText = getAssistantText(event.messages);
     const finalReason = getFinalReason(state, assistantText);
     const finalReasonOrError = finalReason ?? "error";
-    const achievedSummary = summarizeIterationAchievement(assistantText);
+    const achievedSummary = stripStandaloneCompleteSigil(assistantText);
 
     const targetId = state.iterationAnchorId;
     const commandCtx = state.storedCommandCtx;

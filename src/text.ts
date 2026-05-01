@@ -2,6 +2,10 @@ export function hasCompleteSigil(text: string): boolean {
   return /^\s*<COMPLETE>\s*$/m.test(text);
 }
 
+export function stripStandaloneCompleteSigil(text: string): string {
+  return text.replace(/^\s*<COMPLETE>\s*$/gm, "").trim();
+}
+
 const DEFAULT_ACHIEVED_SUMMARY_MAX_LENGTH = 320;
 const DEFAULT_ACHIEVED_SUMMARY_SENTENCES = 2;
 
