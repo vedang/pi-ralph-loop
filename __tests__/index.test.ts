@@ -214,6 +214,11 @@ test("/ralph with no arguments shows the same help text", async () => {
 test("collapsed Ralph iteration summary includes achieved work", async () => {
   const cwd = mkdtempSync(join(tmpdir(), "ralph-loop-summary-"));
   writeFileSync(join(cwd, "plan.md"), "# Plan\n- Do one task\n", "utf8");
+  const assistantText = [
+    "Implemented /ralph help and updated command docs.",
+    "Verified tests and checks pass.",
+    "Documented release notes.",
+  ].join("\n");
 
   const harness = createHarness(cwd);
   await runCommand(harness, "ralph", "plan.md");
@@ -223,28 +228,15 @@ test("collapsed Ralph iteration summary includes achieved work", async () => {
 
   await agentEnd(
     {
-      messages: [
-        {
-          role: "assistant",
-          content:
-            "Implemented /ralph help and updated command docs.\nVerified tests and checks pass.\nDocumented release notes.",
-        },
-      ],
+      messages: [{ role: "assistant", content: assistantText }],
     },
     harness.ctx,
   );
 
   assert.equal(harness.treeSummaries.length, 1);
   const summary = harness.treeSummaries[0] ?? "";
-  assert.match(summary, /Outcome:/);
-  assert.match(summary, /Achieved:/);
-  assert.ok(
-    summary.indexOf("Outcome:") < summary.indexOf("Achieved:"),
-    "expected Outcome to appear before Achieved",
-  );
-  assert.match(summary, /Implemented \/ralph help and updated command docs\./);
-  assert.match(summary, /Verified tests and checks pass\./);
-  assert.match(summary, /Documented release notes\./);
+  assert.match(summary, /Outcome:[\s\S]*Achieved:/);
+  assert.ok(summary.includes(`Achieved: ${assistantText}`));
 });
 
 test("/ralph-prompt creates prompt artifacts and starts one synthesis iteration", async () => {
