@@ -20,6 +20,7 @@ import type {
 import ralphLoopExtension from "../src/index";
 
 type UserMessageContent = Parameters<ExtensionAPI["sendUserMessage"]>[0];
+type UserMessageOptions = Parameters<ExtensionAPI["sendUserMessage"]>[1];
 type ExtensionHandler = (...args: unknown[]) => Promise<unknown> | unknown;
 
 type Harness = ReturnType<typeof createHarness>;
@@ -31,12 +32,27 @@ function createHarness(cwd = process.cwd()): {
   treeSummaries: string[];
   handlers: Map<string, ExtensionHandler>;
   ctx: ExtensionCommandContext;
+  setIdle: (nextIdle: boolean) => void;
 } {
   const commands = new Map<string, RegisteredCommand["handler"]>();
   const sentUserMessages: UserMessageContent[] = [];
   const notifications: Array<{ message: string; level: string }> = [];
   const treeSummaries: string[] = [];
   const handlers = new Map<string, ExtensionHandler>();
+  const idleWaiters: Array<() => void> = [];
+  let idle = true;
+
+  const setIdle = (nextIdle: boolean): void => {
+    idle = nextIdle;
+    if (!idle) {
+      return;
+    }
+
+    const waiters = idleWaiters.splice(0);
+    for (const resolve of waiters) {
+      resolve();
+    }
+  };
 
   const ctx = {
     cwd,
@@ -50,7 +66,16 @@ function createHarness(cwd = process.cwd()): {
       },
       setStatus: () => {},
     },
-    isIdle: () => true,
+    isIdle: () => idle,
+    waitForIdle: async () => {
+      if (idle) {
+        return;
+      }
+
+      await new Promise<void>((resolve) => {
+        idleWaiters.push(resolve);
+      });
+    },
     navigateTree: async (targetId: string) => {
       const sessionBeforeTree = handlers.get("session_before_tree");
       const result = await sessionBeforeTree?.(
@@ -76,7 +101,16 @@ function createHarness(cwd = process.cwd()): {
     ) => {
       commands.set(name, options.handler);
     },
-    sendUserMessage: (content: UserMessageContent) => {
+    sendUserMessage: (
+      content: UserMessageContent,
+      options?: UserMessageOptions,
+    ) => {
+      if (!idle && !options?.deliverAs) {
+        throw new Error(
+          "Agent run is active, send a steering or followup message",
+        );
+      }
+
       sentUserMessages.push(content);
     },
     sendMessage: () => {},
@@ -98,6 +132,7 @@ function createHarness(cwd = process.cwd()): {
     treeSummaries,
     handlers,
     ctx,
+    setIdle,
   };
 }
 
@@ -117,6 +152,48 @@ async function runCommand(
 ): Promise<void> {
   const handler = getCommandHandler(harness, name);
   await handler(args, harness.ctx);
+}
+
+async function startPlanLoop(
+  command: string,
+  options?: {
+    cwdPrefix?: string;
+    planContent?: string;
+  },
+): Promise<Harness> {
+  const cwd = mkdtempSync(
+    join(tmpdir(), options?.cwdPrefix ?? "ralph-loop-plan-fixture-"),
+  );
+  writeFileSync(
+    join(cwd, "plan.md"),
+    options?.planContent ?? "# Plan\n- Do multiple tasks\n",
+    "utf8",
+  );
+
+  const harness = createHarness(cwd);
+  await runCommand(harness, "ralph", command);
+  return harness;
+}
+
+async function emitAgentEnd(
+  harness: Harness,
+  assistantText: string,
+): Promise<void> {
+  const handler = harness.handlers.get("agent_end");
+  assert.ok(handler, "expected agent_end handler to be registered");
+  await handler(
+    {
+      messages: [{ role: "assistant", content: assistantText }],
+    },
+    harness.ctx,
+  );
+}
+
+async function flushAsyncContinuations(): Promise<void> {
+  for (let index = 0; index < 5; index += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await Promise.resolve();
+  }
 }
 
 function assertSingleNotification(harness: Harness, level: string): string {
@@ -212,31 +289,138 @@ test("/ralph with no arguments shows the same help text", async () => {
 });
 
 test("collapsed Ralph iteration summary includes achieved work", async () => {
-  const cwd = mkdtempSync(join(tmpdir(), "ralph-loop-summary-"));
-  writeFileSync(join(cwd, "plan.md"), "# Plan\n- Do one task\n", "utf8");
   const assistantText = [
     "Implemented /ralph help and updated command docs.",
     "Verified tests and checks pass.",
     "Documented release notes.",
   ].join("\n");
 
-  const harness = createHarness(cwd);
-  await runCommand(harness, "ralph", "plan.md");
+  const harness = await startPlanLoop("once plan.md", {
+    cwdPrefix: "ralph-loop-summary-",
+    planContent: "# Plan\n- Do one task\n",
+  });
 
-  const agentEnd = harness.handlers.get("agent_end");
-  assert.ok(agentEnd, "expected agent_end handler to be registered");
-
-  await agentEnd(
-    {
-      messages: [{ role: "assistant", content: assistantText }],
-    },
-    harness.ctx,
-  );
+  await emitAgentEnd(harness, assistantText);
 
   assert.equal(harness.treeSummaries.length, 1);
   const summary = harness.treeSummaries[0] ?? "";
   assert.match(summary, /Outcome:[\s\S]*Achieved:/);
   assert.ok(summary.includes(`Achieved: ${assistantText}`));
+});
+
+test("Ralph waits for idle before sending next iteration prompt", async () => {
+  const harness = await startPlanLoop("plan.md --max-iterations 3", {
+    cwdPrefix: "ralph-loop-idle-boundary-",
+  });
+  assert.equal(harness.sentUserMessages.length, 1);
+
+  harness.setIdle(false);
+  await emitAgentEnd(harness, "Finished iteration 1.");
+
+  assert.equal(harness.treeSummaries.length, 1);
+  assert.equal(harness.sentUserMessages.length, 1);
+
+  harness.setIdle(true);
+  await flushAsyncContinuations();
+
+  assert.equal(harness.sentUserMessages.length, 2);
+  assert.match(
+    userMessageToText(harness.sentUserMessages[1]),
+    /Ralph Loop iteration 2/,
+  );
+});
+
+test("Ralph does not duplicate delayed iteration starts", async () => {
+  const harness = await startPlanLoop("plan.md --max-iterations 3", {
+    cwdPrefix: "ralph-loop-idle-dedupe-",
+  });
+  assert.equal(harness.sentUserMessages.length, 1);
+
+  harness.setIdle(false);
+  await Promise.all([
+    emitAgentEnd(harness, "Finished iteration 1."),
+    emitAgentEnd(harness, "Finished iteration 1."),
+  ]);
+
+  assert.equal(harness.sentUserMessages.length, 1);
+
+  harness.setIdle(true);
+  await flushAsyncContinuations();
+
+  assert.equal(harness.sentUserMessages.length, 2);
+});
+
+test("Ralph ignores stale delayed starts from replaced loops", async () => {
+  const oldHarness = await startPlanLoop("plan.md --max-iterations 3", {
+    cwdPrefix: "ralph-loop-stale-old-",
+  });
+  oldHarness.setIdle(false);
+  await emitAgentEnd(oldHarness, "Finished old iteration 1.");
+
+  const newHarness = await startPlanLoop("plan.md --max-iterations 3", {
+    cwdPrefix: "ralph-loop-stale-new-",
+  });
+  newHarness.setIdle(false);
+  await emitAgentEnd(newHarness, "Finished new iteration 1.");
+
+  oldHarness.setIdle(true);
+  await flushAsyncContinuations();
+
+  assert.equal(oldHarness.sentUserMessages.length, 1);
+  assert.equal(newHarness.sentUserMessages.length, 1);
+
+  newHarness.setIdle(true);
+  await flushAsyncContinuations();
+
+  assert.equal(oldHarness.sentUserMessages.length, 1);
+  assert.equal(newHarness.sentUserMessages.length, 2);
+});
+
+test("Ralph stop request cancels delayed next iteration", async () => {
+  const harness = await startPlanLoop("plan.md --max-iterations 3", {
+    cwdPrefix: "ralph-loop-stop-boundary-",
+  });
+  assert.equal(harness.sentUserMessages.length, 1);
+
+  harness.setIdle(false);
+  await emitAgentEnd(harness, "Finished iteration 1.");
+  await runCommand(harness, "ralph", "stop");
+
+  harness.setIdle(true);
+  await flushAsyncContinuations();
+
+  assert.equal(harness.sentUserMessages.length, 1);
+  assert.ok(
+    getNotificationMessages(harness, "info").some((message) =>
+      /will stop after the current iteration completes/.test(message),
+    ),
+  );
+  assert.ok(
+    getNotificationMessages(harness, "info").some((message) =>
+      /Ralph loop stopped/.test(message),
+    ),
+  );
+});
+
+test("Ralph finalizes max iteration without scheduling another prompt", async () => {
+  const harness = await startPlanLoop("plan.md --max-iterations 1", {
+    cwdPrefix: "ralph-loop-max-boundary-",
+    planContent: "# Plan\n- Do one task\n",
+  });
+  assert.equal(harness.sentUserMessages.length, 1);
+
+  harness.setIdle(false);
+  await emitAgentEnd(harness, "Finished only iteration.");
+
+  harness.setIdle(true);
+  await flushAsyncContinuations();
+
+  assert.equal(harness.sentUserMessages.length, 1);
+  assert.ok(
+    getNotificationMessages(harness, "warning").some((message) =>
+      /max-iteration cap/.test(message),
+    ),
+  );
 });
 
 test("/ralph-prompt creates prompt artifacts and starts one synthesis iteration", async () => {

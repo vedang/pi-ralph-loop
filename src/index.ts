@@ -37,15 +37,18 @@ import {
 import { stripStandaloneCompleteSigil } from "./text.js";
 
 interface RalphStateV2 extends RalphState {
+  runId: number;
   runMode: RalphRunMode;
   iterationAnchorId: string | null;
   storedCommandCtx: ExtensionCommandContext | null;
   pendingCollapse: RalphPendingCollapse | null;
+  scheduledIteration: number | null;
 }
 
 const RALPH_BUSY_ERROR =
   "Agent is busy. Wait for the current turn to finish before starting Ralph.";
 
+let nextRunId = 0;
 let state: RalphStateV2 | null = null;
 
 function getAssistantText(messages: unknown[]): string {
@@ -178,6 +181,116 @@ function startIteration(ctx: ExtensionContext, pi: ExtensionAPI): void {
   );
 }
 
+function isCurrentScheduledState(
+  scheduledState: RalphStateV2 | null,
+  runId: number,
+  scheduledIteration: number,
+): scheduledState is RalphStateV2 {
+  return Boolean(
+    scheduledState?.active &&
+      state === scheduledState &&
+      scheduledState.runId === runId &&
+      scheduledState.scheduledIteration === scheduledIteration &&
+      scheduledState.iteration === scheduledIteration - 1,
+  );
+}
+
+async function getScheduledIdleState(
+  ctx: ExtensionCommandContext,
+  runId: number,
+  scheduledIteration: number,
+): Promise<RalphStateV2 | null> {
+  while (true) {
+    const scheduledState = state;
+    if (!isCurrentScheduledState(scheduledState, runId, scheduledIteration)) {
+      return null;
+    }
+
+    if (ctx.isIdle()) {
+      return scheduledState;
+    }
+
+    await ctx.waitForIdle();
+  }
+}
+
+function clearScheduledIteration(
+  runId: number,
+  scheduledIteration: number,
+): boolean {
+  const scheduledState = state;
+  if (
+    !scheduledState?.active ||
+    scheduledState.runId !== runId ||
+    scheduledState.scheduledIteration !== scheduledIteration
+  ) {
+    return false;
+  }
+
+  scheduledState.scheduledIteration = null;
+  return true;
+}
+
+async function runScheduledIteration(
+  ctx: ExtensionCommandContext,
+  pi: ExtensionAPI,
+  runId: number,
+  scheduledIteration: number,
+): Promise<void> {
+  try {
+    const scheduledState = await getScheduledIdleState(
+      ctx,
+      runId,
+      scheduledIteration,
+    );
+    if (!isCurrentScheduledState(scheduledState, runId, scheduledIteration)) {
+      return;
+    }
+
+    if (scheduledState.stopping) {
+      finalizeLoop(ctx, "stop");
+      return;
+    }
+
+    scheduledState.iteration = scheduledIteration;
+    startIteration(ctx, pi);
+    clearScheduledIteration(runId, scheduledIteration);
+  } catch (error) {
+    if (!clearScheduledIteration(runId, scheduledIteration)) {
+      return;
+    }
+
+    if (ctx.hasUI) {
+      ctx.ui.notify(
+        `Ralph delayed iteration failed: ${formatError(error)}`,
+        "error",
+      );
+    }
+    finalizeLoop(ctx, "error");
+  }
+}
+
+function scheduleNextIteration(
+  ctx: ExtensionCommandContext,
+  pi: ExtensionAPI,
+  scheduledIteration: number,
+): void {
+  if (!state?.active) {
+    return;
+  }
+
+  if (state.scheduledIteration === scheduledIteration) {
+    return;
+  }
+
+  const runId = state.runId;
+  state.scheduledIteration = scheduledIteration;
+
+  setTimeout(() => {
+    void runScheduledIteration(ctx, pi, runId, scheduledIteration);
+  }, 0);
+}
+
 function startRalphLoop(
   ctx: ExtensionCommandContext,
   pi: ExtensionAPI,
@@ -185,9 +298,11 @@ function startRalphLoop(
   runMode: RalphRunMode,
   maxIterations: number,
 ): void {
+  nextRunId += 1;
   state = {
     active: true,
     stopping: false,
+    runId: nextRunId,
     runMode,
     iteration: 1,
     maxIterations,
@@ -198,6 +313,7 @@ function startRalphLoop(
     iterationAnchorId: null,
     storedCommandCtx: ctx,
     pendingCollapse: null,
+    scheduledIteration: null,
   };
   updateStatus(ctx);
   ctx.ui.notify(buildStatusMessage(state), "info");
@@ -342,8 +458,7 @@ export default function ralphLoopExtension(pi: ExtensionAPI): void {
       return;
     }
 
-    state.iteration += 1;
-    startIteration(commandCtx, pi);
+    scheduleNextIteration(commandCtx, pi, state.iteration + 1);
   });
 
   pi.on("session_before_compact", async () => {
