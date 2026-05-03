@@ -224,20 +224,38 @@ async function emitAgentEnd(
   );
 }
 
+const FOLLOW_UP_DRAIN_TEST_DELAY_MS = 50;
+
+function getLastUserMessageText(harness: Harness): string {
+  return userMessageToText(harness.sentUserMessages.at(-1));
+}
+
+async function emitCurrentRalphBeforeAgentStart(
+  harness: Harness,
+): Promise<{ systemPrompt?: string } | undefined> {
+  return emitBeforeAgentStart(harness, getLastUserMessageText(harness));
+}
+
 async function emitRalphAgentEnd(
   harness: Harness,
   assistantText: string,
 ): Promise<void> {
-  const iterationPrompt = userMessageToText(harness.sentUserMessages.at(-1));
-  await emitBeforeAgentStart(harness, iterationPrompt);
+  await emitCurrentRalphBeforeAgentStart(harness);
   await emitAgentEnd(harness, assistantText);
 }
 
-async function flushAsyncContinuations(): Promise<void> {
+async function flushScheduledRalphWork(): Promise<void> {
   for (let index = 0; index < 5; index += 1) {
     await new Promise((resolve) => setTimeout(resolve, 0));
     await Promise.resolve();
   }
+}
+
+async function waitForFollowUpDrainPoll(): Promise<void> {
+  await new Promise((resolve) =>
+    setTimeout(resolve, FOLLOW_UP_DRAIN_TEST_DELAY_MS),
+  );
+  await flushScheduledRalphWork();
 }
 
 function assertSingleNotification(harness: Harness, level: string): string {
@@ -255,6 +273,17 @@ function getNotificationMessages(harness: Harness, level?: string): string[] {
   return harness.notifications
     .filter((notification) => (level ? notification.level === level : true))
     .map((notification) => notification.message);
+}
+
+async function assertRalphStatus(
+  harness: Harness,
+  expectedStatus: RegExp,
+): Promise<void> {
+  await runCommand(harness, "ralph", "status");
+  assert.match(
+    getNotificationMessages(harness, "info").at(-1) ?? "",
+    expectedStatus,
+  );
 }
 
 function userMessageToText(content: UserMessageContent | undefined): string {
@@ -341,44 +370,44 @@ test("Ralph stops only for interactive textarea input", async () => {
     "I need to interrupt this loop",
     "interactive",
   );
-  await runCommand(interactiveHarness, "ralph", "status");
 
   assert.ok(
     getNotificationMessages(interactiveHarness, "warning").some((message) =>
       /stopped by manual input/.test(message),
     ),
   );
-  assert.match(
-    getNotificationMessages(interactiveHarness, "info").at(-1) ?? "",
-    /Ralph loop is not active/,
-  );
+  await assertRalphStatus(interactiveHarness, /Ralph loop is not active/);
 
-  const extensionHarness = await startPlanLoop("plan.md", {
-    cwdPrefix: "ralph-loop-extension-input-",
-  });
-  await emitInput(extensionHarness, "/simplify-code follow-up", "extension");
-  await runCommand(extensionHarness, "ralph", "status");
+  const nonInteractiveInputs: Array<{
+    source: Exclude<InputSource, "interactive">;
+    text: string;
+    cwdPrefix: string;
+  }> = [
+    {
+      source: "extension",
+      text: "/simplify-code follow-up",
+      cwdPrefix: "ralph-loop-extension-input-",
+    },
+    {
+      source: "rpc",
+      text: "RPC-origin follow-up",
+      cwdPrefix: "ralph-loop-rpc-input-",
+    },
+  ];
 
-  assert.match(
-    getNotificationMessages(extensionHarness, "info").at(-1) ?? "",
-    /Ralph loop: active/,
-  );
-  assert.ok(
-    getNotificationMessages(extensionHarness, "warning").every(
-      (message) => !/stopped by manual input/.test(message),
-    ),
-  );
+  for (const input of nonInteractiveInputs) {
+    const harness = await startPlanLoop("plan.md", {
+      cwdPrefix: input.cwdPrefix,
+    });
+    await emitInput(harness, input.text, input.source);
 
-  const rpcHarness = await startPlanLoop("plan.md", {
-    cwdPrefix: "ralph-loop-rpc-input-",
-  });
-  await emitInput(rpcHarness, "RPC-origin follow-up", "rpc");
-  await runCommand(rpcHarness, "ralph", "status");
-
-  assert.match(
-    getNotificationMessages(rpcHarness, "info").at(-1) ?? "",
-    /Ralph loop: active/,
-  );
+    await assertRalphStatus(harness, /Ralph loop: active/);
+    assert.ok(
+      getNotificationMessages(harness, "warning").every(
+        (message) => !/stopped by manual input/.test(message),
+      ),
+    );
+  }
 });
 
 test("Ralph injects its system prompt only into owned iteration turns", async () => {
@@ -405,34 +434,28 @@ test("Ralph ignores agent_end events for non-owned extension turns", async () =>
 
   await emitBeforeAgentStart(harness, "/simplify-code follow-up");
   await emitAgentEnd(harness, "Simplify-code follow-up finished.");
-  await flushAsyncContinuations();
-  await runCommand(harness, "ralph", "status");
+  await flushScheduledRalphWork();
 
   assert.equal(harness.treeSummaries.length, 0);
   assert.equal(harness.sentUserMessages.length, 1);
-  assert.match(
-    getNotificationMessages(harness, "info").at(-1) ?? "",
-    /Iteration: 1\/3/,
-  );
+  await assertRalphStatus(harness, /Iteration: 1\/3/);
 });
 
 test("Ralph waits for extension follow-ups to drain before collapse", async () => {
   const harness = await startPlanLoop("plan.md --max-iterations 3", {
     cwdPrefix: "ralph-loop-followup-drain-",
   });
-  const iterationPrompt = userMessageToText(harness.sentUserMessages[0]);
-  await emitBeforeAgentStart(harness, iterationPrompt);
+  await emitCurrentRalphBeforeAgentStart(harness);
 
   harness.setPendingMessages(true);
   await emitAgentEnd(harness, "Finished iteration 1.");
-  await flushAsyncContinuations();
+  await flushScheduledRalphWork();
 
   assert.equal(harness.treeSummaries.length, 0);
   assert.equal(harness.sentUserMessages.length, 1);
 
   harness.setPendingMessages(false);
-  await new Promise((resolve) => setTimeout(resolve, 50));
-  await flushAsyncContinuations();
+  await waitForFollowUpDrainPoll();
 
   assert.equal(harness.treeSummaries.length, 1);
   assert.equal(harness.sentUserMessages.length, 2);
@@ -455,7 +478,7 @@ test("collapsed Ralph iteration summary includes achieved work", async () => {
   });
 
   await emitRalphAgentEnd(harness, assistantText);
-  await flushAsyncContinuations();
+  await flushScheduledRalphWork();
 
   assert.equal(harness.treeSummaries.length, 1);
   const summary = harness.treeSummaries[0] ?? "";
@@ -469,19 +492,16 @@ test("Ralph waits for idle before sending next iteration prompt", async () => {
   });
   assert.equal(harness.sentUserMessages.length, 1);
 
-  await emitBeforeAgentStart(
-    harness,
-    userMessageToText(harness.sentUserMessages[0]),
-  );
+  await emitCurrentRalphBeforeAgentStart(harness);
   harness.setIdle(false);
   await emitAgentEnd(harness, "Finished iteration 1.");
-  await flushAsyncContinuations();
+  await flushScheduledRalphWork();
 
   assert.equal(harness.treeSummaries.length, 0);
   assert.equal(harness.sentUserMessages.length, 1);
 
   harness.setIdle(true);
-  await flushAsyncContinuations();
+  await flushScheduledRalphWork();
 
   assert.equal(harness.treeSummaries.length, 1);
   assert.equal(harness.sentUserMessages.length, 2);
@@ -497,10 +517,7 @@ test("Ralph does not duplicate delayed iteration starts", async () => {
   });
   assert.equal(harness.sentUserMessages.length, 1);
 
-  await emitBeforeAgentStart(
-    harness,
-    userMessageToText(harness.sentUserMessages[0]),
-  );
+  await emitCurrentRalphBeforeAgentStart(harness);
   harness.setIdle(false);
   await Promise.all([
     emitAgentEnd(harness, "Finished iteration 1."),
@@ -510,7 +527,7 @@ test("Ralph does not duplicate delayed iteration starts", async () => {
   assert.equal(harness.sentUserMessages.length, 1);
 
   harness.setIdle(true);
-  await flushAsyncContinuations();
+  await flushScheduledRalphWork();
 
   assert.equal(harness.sentUserMessages.length, 2);
 });
@@ -519,31 +536,25 @@ test("Ralph ignores stale delayed starts from replaced loops", async () => {
   const oldHarness = await startPlanLoop("plan.md --max-iterations 3", {
     cwdPrefix: "ralph-loop-stale-old-",
   });
-  await emitBeforeAgentStart(
-    oldHarness,
-    userMessageToText(oldHarness.sentUserMessages[0]),
-  );
+  await emitCurrentRalphBeforeAgentStart(oldHarness);
   oldHarness.setIdle(false);
   await emitAgentEnd(oldHarness, "Finished old iteration 1.");
 
   const newHarness = await startPlanLoop("plan.md --max-iterations 3", {
     cwdPrefix: "ralph-loop-stale-new-",
   });
-  await emitBeforeAgentStart(
-    newHarness,
-    userMessageToText(newHarness.sentUserMessages[0]),
-  );
+  await emitCurrentRalphBeforeAgentStart(newHarness);
   newHarness.setIdle(false);
   await emitAgentEnd(newHarness, "Finished new iteration 1.");
 
   oldHarness.setIdle(true);
-  await flushAsyncContinuations();
+  await flushScheduledRalphWork();
 
   assert.equal(oldHarness.sentUserMessages.length, 1);
   assert.equal(newHarness.sentUserMessages.length, 1);
 
   newHarness.setIdle(true);
-  await flushAsyncContinuations();
+  await flushScheduledRalphWork();
 
   assert.equal(oldHarness.sentUserMessages.length, 1);
   assert.equal(newHarness.sentUserMessages.length, 2);
@@ -555,16 +566,13 @@ test("Ralph stop request cancels delayed next iteration", async () => {
   });
   assert.equal(harness.sentUserMessages.length, 1);
 
-  await emitBeforeAgentStart(
-    harness,
-    userMessageToText(harness.sentUserMessages[0]),
-  );
+  await emitCurrentRalphBeforeAgentStart(harness);
   harness.setIdle(false);
   await emitAgentEnd(harness, "Finished iteration 1.");
   await runCommand(harness, "ralph", "stop");
 
   harness.setIdle(true);
-  await flushAsyncContinuations();
+  await flushScheduledRalphWork();
 
   assert.equal(harness.sentUserMessages.length, 1);
   assert.ok(
@@ -586,15 +594,12 @@ test("Ralph finalizes max iteration without scheduling another prompt", async ()
   });
   assert.equal(harness.sentUserMessages.length, 1);
 
-  await emitBeforeAgentStart(
-    harness,
-    userMessageToText(harness.sentUserMessages[0]),
-  );
+  await emitCurrentRalphBeforeAgentStart(harness);
   harness.setIdle(false);
   await emitAgentEnd(harness, "Finished only iteration.");
 
   harness.setIdle(true);
-  await flushAsyncContinuations();
+  await flushScheduledRalphWork();
 
   assert.equal(harness.sentUserMessages.length, 1);
   assert.ok(

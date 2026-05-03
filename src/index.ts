@@ -41,7 +41,7 @@ interface RalphStateV2 extends RalphState {
   runId: number;
   runMode: RalphRunMode;
   iterationAnchorId: string | null;
-  storedCommandCtx: ExtensionCommandContext | null;
+  storedCommandCtx: ExtensionCommandContext;
   pendingCollapse: RalphPendingCollapse | null;
   scheduledIteration: number | null;
   pendingIterationPrompt: string | null;
@@ -49,6 +49,7 @@ interface RalphStateV2 extends RalphState {
 }
 const RALPH_BUSY_ERROR =
   "Agent is busy. Wait for the current turn to finish before starting Ralph.";
+const FOLLOW_UP_DRAIN_POLL_MS = 25;
 
 let nextRunId = 0;
 let state: RalphStateV2 | null = null;
@@ -240,19 +241,18 @@ interface OwnedIterationCompletion {
   iteration: number;
   targetId: string;
   finalReason: RalphPendingCollapseReason;
-  finalReasonOrError: RalphStopReason;
   achievedSummary: string;
 }
 
 function isCurrentTurnState(
-  expectedState: RalphStateV2 | null,
+  candidateState: RalphStateV2 | null,
   runId: number,
   iteration: number,
-): expectedState is RalphStateV2 {
+): candidateState is RalphStateV2 {
   return Boolean(
-    expectedState?.active &&
-      expectedState.runId === runId &&
-      expectedState.iteration === iteration,
+    candidateState?.active &&
+      candidateState.runId === runId &&
+      candidateState.iteration === iteration,
   );
 }
 
@@ -260,13 +260,6 @@ function sleep(ms = 0): Promise<void> {
   return new Promise<void>((resolve) => {
     setTimeout(resolve, ms);
   });
-}
-
-function hasPendingMessages(ctx: ExtensionCommandContext): boolean {
-  return typeof (ctx as { hasPendingMessages?: () => boolean })
-    .hasPendingMessages === "function"
-    ? ctx.hasPendingMessages()
-    : false;
 }
 
 async function waitForOwnedTurnDrain(
@@ -287,8 +280,8 @@ async function waitForOwnedTurnDrain(
       continue;
     }
 
-    if (hasPendingMessages(ctx)) {
-      await sleep(25);
+    if (ctx.hasPendingMessages()) {
+      await sleep(FOLLOW_UP_DRAIN_POLL_MS);
       continue;
     }
 
@@ -298,7 +291,6 @@ async function waitForOwnedTurnDrain(
 
 async function handleOwnedIterationEnd(
   completion: OwnedIterationCompletion,
-  ctx: ExtensionContext,
   commandCtx: ExtensionCommandContext,
   pi: ExtensionAPI,
 ): Promise<void> {
@@ -315,8 +307,10 @@ async function handleOwnedIterationEnd(
     return;
   }
 
-  if (!state.iterationAnchorId || !state.storedCommandCtx) {
-    finalizeLoop(ctx, completion.finalReasonOrError);
+  const fallbackReason = completion.finalReason ?? "error";
+
+  if (!state.iterationAnchorId) {
+    finalizeLoop(commandCtx, fallbackReason);
     return;
   }
 
@@ -332,15 +326,15 @@ async function handleOwnedIterationEnd(
       summarize: true,
     });
     if (result.cancelled) {
-      finalizeLoop(ctx, completion.finalReasonOrError);
+      finalizeLoop(commandCtx, fallbackReason);
       return;
     }
   } catch (error) {
-    if (ctx.hasUI) {
+    if (commandCtx.hasUI) {
       const message = error instanceof Error ? error.message : String(error);
-      ctx.ui.notify(`Ralph collapse failed: ${message}`, "error");
+      commandCtx.ui.notify(`Ralph collapse failed: ${message}`, "error");
     }
-    finalizeLoop(ctx, completion.finalReasonOrError);
+    finalizeLoop(commandCtx, fallbackReason);
     return;
   } finally {
     if (
@@ -357,7 +351,7 @@ async function handleOwnedIterationEnd(
   }
 
   if (completion.finalReason) {
-    finalizeLoop(ctx, completion.finalReason);
+    finalizeLoop(commandCtx, completion.finalReason);
     return;
   }
 
@@ -547,18 +541,13 @@ export default function ralphLoopExtension(pi: ExtensionAPI): void {
     };
   });
 
-  pi.on("agent_end", async (event, ctx) => {
-    if (
-      !state?.active ||
-      state.activeOwnedIteration !== state.iteration ||
-      !state.storedCommandCtx
-    ) {
+  pi.on("agent_end", async (event) => {
+    if (!state?.active || state.activeOwnedIteration !== state.iteration) {
       return;
     }
 
     const assistantText = getAssistantText(event.messages);
     const finalReason = getFinalReason(state, assistantText);
-    const finalReasonOrError = finalReason ?? "error";
     const achievedSummary = stripStandaloneCompleteSigil(assistantText);
     const currentIteration = state.iteration;
     const runId = state.runId;
@@ -567,7 +556,7 @@ export default function ralphLoopExtension(pi: ExtensionAPI): void {
     state.activeOwnedIteration = null;
 
     if (!targetId) {
-      finalizeLoop(ctx, finalReasonOrError);
+      finalizeLoop(commandCtx, finalReason ?? "error");
       return;
     }
 
@@ -579,10 +568,8 @@ export default function ralphLoopExtension(pi: ExtensionAPI): void {
           iteration: currentIteration,
           targetId,
           finalReason,
-          finalReasonOrError,
           achievedSummary,
         },
-        ctx,
         commandCtx,
         pi,
       ).catch((error: unknown) => {
@@ -590,13 +577,13 @@ export default function ralphLoopExtension(pi: ExtensionAPI): void {
           return;
         }
 
-        if (ctx.hasUI) {
-          ctx.ui.notify(
+        if (commandCtx.hasUI) {
+          commandCtx.ui.notify(
             `Ralph delayed completion failed: ${formatError(error)}`,
             "error",
           );
         }
-        finalizeLoop(ctx, "error");
+        finalizeLoop(commandCtx, "error");
       });
     }, 0);
   });
