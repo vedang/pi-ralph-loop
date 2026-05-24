@@ -16,7 +16,7 @@ import type {
   ExtensionCommandContext,
   InputSource,
   RegisteredCommand,
-} from "@mariozechner/pi-coding-agent";
+} from "@earendil-works/pi-coding-agent";
 
 import ralphLoopExtension from "../src/index";
 
@@ -192,6 +192,15 @@ async function emitInput(
   const handler = harness.handlers.get("input");
   assert.ok(handler, "expected input handler to be registered");
   await handler({ type: "input", text, source }, harness.ctx);
+}
+
+async function emitSessionStart(
+  harness: Harness,
+  reason: "new" | "reload",
+): Promise<void> {
+  const handler = harness.handlers.get("session_start");
+  assert.ok(handler, "expected session_start handler to be registered");
+  await handler({ type: "session_start", reason }, harness.ctx);
 }
 
 async function emitBeforeAgentStart(
@@ -407,6 +416,23 @@ test("Ralph stops only for interactive textarea input", async () => {
         (message) => !/stopped by manual input/.test(message),
       ),
     );
+  }
+});
+
+test("Ralph clears active loops when the host starts a new or reloaded session", async () => {
+  for (const reason of ["new", "reload"] as const) {
+    const harness = await startPlanLoop("plan.md --max-iterations 3", {
+      cwdPrefix: `ralph-loop-session-${reason}-`,
+    });
+    assert.equal(harness.sentUserMessages.length, 1);
+
+    await emitSessionStart(harness, reason);
+    await emitRalphAgentEnd(harness, "Finished stale iteration.");
+    await flushScheduledRalphWork();
+
+    assert.equal(harness.treeSummaries.length, 0);
+    assert.equal(harness.sentUserMessages.length, 1);
+    await assertRalphStatus(harness, /Ralph loop is not active/);
   }
 });
 

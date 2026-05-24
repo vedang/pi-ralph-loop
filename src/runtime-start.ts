@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 
-import type { ExtensionCommandContext } from "@mariozechner/pi-coding-agent";
+import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 
 import { type RalphCommand, defaultProgressPathForPlan } from "./command.js";
 import { RALPH_CUSTOM_TARGET, type RalphTargetName } from "./contract.js";
