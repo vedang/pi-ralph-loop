@@ -6,7 +6,8 @@
   "main": "./src/index.ts",
   "keywords": ["pi-package", "pi", "extension", "ralph", "loop", "planning"],
   "pi": {
-    "extensions": ["./src/index.ts"]
+    "extensions": ["./src/index.ts"],
+    "image": "https://raw.githubusercontent.com/vedang/pi-ralph-loop/main/images/banner.png"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
