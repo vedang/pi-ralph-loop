@@ -4,11 +4,20 @@ import type { RalphBuiltinTarget, RalphRunMode } from "./contract.js";
 
 export type { RalphBuiltinTarget, RalphRunMode } from "./contract.js";
 
+const NON_START_COMMAND_LABEL = {
+  help: "Help",
+  status: "Status",
+  stop: "Stop",
+  continue: "Continue",
+} as const;
+
+type NonStartCommandKind = keyof typeof NON_START_COMMAND_LABEL;
+type NonStartCommand = {
+  [Kind in NonStartCommandKind]: { kind: Kind };
+}[NonStartCommandKind];
+
 export type RalphCommand =
-  | { kind: "help" }
-  | { kind: "status" }
-  | { kind: "stop" }
-  | { kind: "continue" }
+  | NonStartCommand
   | {
       kind: "start";
       runMode: RalphRunMode;
@@ -17,16 +26,6 @@ export type RalphCommand =
         | { kind: "file"; planFile: string; progressFile?: string };
       maxIterations: number;
     };
-
-const NON_START_COMMAND_LABEL: Record<
-  "help" | "status" | "stop" | "continue",
-  string
-> = {
-  help: "Help",
-  status: "Status",
-  stop: "Stop",
-  continue: "Continue",
-};
 
 export const RALPH_HELP_TEXT = [
   "Ralph runs an iterative planning loop from a plan file or built-in target.",
@@ -114,15 +113,12 @@ function parseNonStartCommand(
   runMode: RalphRunMode,
   positionals: string[],
   maxIterationsSpecified: boolean,
-): Extract<
-  RalphCommand,
-  { kind: "help" | "status" | "stop" | "continue" }
-> | null {
+): NonStartCommand | null {
   if (!name || !Object.hasOwn(NON_START_COMMAND_LABEL, name)) {
     return null;
   }
 
-  const command = name as keyof typeof NON_START_COMMAND_LABEL;
+  const command = name as NonStartCommandKind;
   const displayName = NON_START_COMMAND_LABEL[command];
 
   if (runMode === "once") {

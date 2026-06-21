@@ -115,11 +115,10 @@ function notifyIfBusy(ctx: ExtensionCommandContext): boolean {
   return true;
 }
 
-function getStreamingBehavior(
-  event: unknown,
-): "steer" | "followUp" | undefined {
-  const value = (event as { streamingBehavior?: unknown }).streamingBehavior;
-  return value === "steer" || value === "followUp" ? value : undefined;
+function isSteerInput(event: unknown): boolean {
+  return (
+    (event as { streamingBehavior?: unknown }).streamingBehavior === "steer"
+  );
 }
 
 function isPromptSynthesisLoop(): boolean {
@@ -373,16 +372,13 @@ async function resumeOwnedIteration(
   commandCtx: ExtensionCommandContext,
   pi: ExtensionAPI,
 ): Promise<void> {
-  const currentState = state;
-  if (
-    !isCurrentTurnState(currentState, completion.runId, completion.iteration)
-  ) {
+  if (!isCurrentTurnState(state, completion.runId, completion.iteration)) {
     return;
   }
 
-  currentState.pausedBySteer = false;
-  currentState.continueRequested = false;
-  currentState.pendingOwnedCompletion = null;
+  state.pausedBySteer = false;
+  state.continueRequested = false;
+  state.pendingOwnedCompletion = null;
   updateStatus(commandCtx);
 
   await handleOwnedIterationEnd(completion, commandCtx, pi);
@@ -531,6 +527,9 @@ function formatError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+const RALPH_CONTINUE_AFTER_STEER_MESSAGE =
+  "Ralph loop will continue after the steered turn completes.";
+
 async function handleContinueCommand(
   ctx: ExtensionCommandContext,
   pi: ExtensionAPI,
@@ -549,27 +548,22 @@ async function handleContinueCommand(
   updateStatus(ctx);
 
   const completion = state.pendingOwnedCompletion;
-  if (completion) {
-    if (ctx.isIdle()) {
-      ctx.ui.notify("Ralph loop continuing after steering.", "info");
-      await resumeOwnedIteration(completion, ctx, pi);
-      return;
-    }
-
-    ctx.ui.notify(
-      "Ralph loop will continue after the steered turn completes.",
-      "info",
-    );
-    scheduleOwnedIterationCompletion(completion, ctx, pi, true);
+  if (completion && ctx.isIdle()) {
+    ctx.ui.notify("Ralph loop continuing after steering.", "info");
+    await resumeOwnedIteration(completion, ctx, pi);
     return;
   }
 
   ctx.ui.notify(
     ctx.isIdle()
       ? "Ralph loop will continue when the steered turn completes."
-      : "Ralph loop will continue after the steered turn completes.",
+      : RALPH_CONTINUE_AFTER_STEER_MESSAGE,
     "info",
   );
+
+  if (completion) {
+    scheduleOwnedIterationCompletion(completion, ctx, pi, true);
+  }
 }
 
 function handlePromptCommand(
@@ -598,7 +592,7 @@ export default function ralphLoopExtension(pi: ExtensionAPI): void {
       return;
     }
 
-    if (getStreamingBehavior(event) === "steer") {
+    if (isSteerInput(event)) {
       const wasPaused = state.pausedBySteer;
       state.pausedBySteer = true;
       if (!wasPaused && ctx.hasUI) {

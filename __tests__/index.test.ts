@@ -308,6 +308,15 @@ async function assertRalphStatus(
   );
 }
 
+function assertContinuedToSecondIteration(harness: Harness): void {
+  assert.equal(harness.treeSummaries.length, 1);
+  assert.equal(harness.sentUserMessages.length, 2);
+  assert.match(
+    userMessageToText(harness.sentUserMessages[1]),
+    /Ralph Loop iteration 2/,
+  );
+}
+
 function userMessageToText(content: UserMessageContent | undefined): string {
   if (typeof content === "string") {
     return content;
@@ -470,12 +479,7 @@ test("Ralph continue resumes after paused steered turn finishes", async () => {
   await runCommand(harness, "ralph", "continue");
   await flushScheduledRalphWork();
 
-  assert.equal(harness.treeSummaries.length, 1);
-  assert.equal(harness.sentUserMessages.length, 2);
-  assert.match(
-    userMessageToText(harness.sentUserMessages[1]),
-    /Ralph Loop iteration 2/,
-  );
+  assertContinuedToSecondIteration(harness);
 });
 
 test("Ralph continue can be requested while steered turn is running", async () => {
@@ -505,12 +509,7 @@ test("Ralph continue can be requested while steered turn is running", async () =
   harness.setIdle(true);
   await flushScheduledRalphWork();
 
-  assert.equal(harness.treeSummaries.length, 1);
-  assert.equal(harness.sentUserMessages.length, 2);
-  assert.match(
-    userMessageToText(harness.sentUserMessages[1]),
-    /Ralph Loop iteration 2/,
-  );
+  assertContinuedToSecondIteration(harness);
 });
 
 test("Ralph follow-up still stops by manual input", async () => {
