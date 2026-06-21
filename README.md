@@ -25,6 +25,7 @@ pi install -l git:github.com/vedang/pi-ralph-loop
 - `/ralph once clean-room`
 - `/ralph [once] <target> --max-iterations <n>`
 - `/ralph status`
+- `/ralph continue`
 - `/ralph stop`
 - `/ralph-prompt <prompt>`
 
@@ -41,6 +42,7 @@ Example forms:
 /ralph once clean-room
 /ralph-prompt improve command parsing coverage
 /ralph status
+/ralph continue
 /ralph stop
 ```
 
@@ -56,7 +58,9 @@ Example forms:
 - Built-in targets include the same stronger iteration contract in their generated plans, and custom plans receive it via the per-iteration prompt.
 - After each iteration, the extension collapses context and starts the next iteration fresh.
 - The durable state lives on disk in planning artifacts, not in chat history.
-- Manual user input stops the active Ralph loop.
+- Interactive steering while Ralph's iteration is streaming pauses the loop so the current turn can absorb the steering.
+- `/ralph continue` resumes a loop paused by steering, including when requested before the steered turn finishes.
+- Follow-up or idle manual user input still stops the active Ralph loop.
 
 ## Workflow-native defaults
 

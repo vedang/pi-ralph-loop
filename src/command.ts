@@ -8,6 +8,7 @@ export type RalphCommand =
   | { kind: "help" }
   | { kind: "status" }
   | { kind: "stop" }
+  | { kind: "continue" }
   | {
       kind: "start";
       runMode: RalphRunMode;
@@ -17,15 +18,19 @@ export type RalphCommand =
       maxIterations: number;
     };
 
-const NON_START_COMMAND_LABEL: Record<"help" | "status" | "stop", string> = {
+const NON_START_COMMAND_LABEL: Record<
+  "help" | "status" | "stop" | "continue",
+  string
+> = {
   help: "Help",
   status: "Status",
   stop: "Stop",
+  continue: "Continue",
 };
 
 export const RALPH_HELP_TEXT = [
   "Ralph runs an iterative planning loop from a plan file or built-in target.",
-  "Use `once` for one iteration, `status` to inspect the current loop, and `stop` to stop after the current iteration.",
+  "Use `once` for one iteration, `status` to inspect the current loop, `continue` to resume after steering, and `stop` to stop after the current iteration.",
   "",
   "Usage:",
   "/ralph help             Show this help text",
@@ -39,6 +44,7 @@ export const RALPH_HELP_TEXT = [
   "Use `/ralph-prompt <prompt>` to create a prompt-seeded plan.",
   "",
   "/ralph status",
+  "/ralph continue",
   "/ralph stop",
 ].join("\n");
 
@@ -108,7 +114,10 @@ function parseNonStartCommand(
   runMode: RalphRunMode,
   positionals: string[],
   maxIterationsSpecified: boolean,
-): Extract<RalphCommand, { kind: "help" | "status" | "stop" }> | null {
+): Extract<
+  RalphCommand,
+  { kind: "help" | "status" | "stop" | "continue" }
+> | null {
   if (!name || !Object.hasOwn(NON_START_COMMAND_LABEL, name)) {
     return null;
   }

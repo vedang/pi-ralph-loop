@@ -27,3 +27,21 @@ test("buildStatusMessage includes target, iteration, paths, artifacts, and stop 
   assert.match(message, /Artifacts: \/tmp\/task\/spec\.md/);
   assert.match(message, /Stop requested: yes/);
 });
+
+test("buildStatusMessage reports steering pause and pending continue", () => {
+  const message = buildStatusMessage({
+    active: true,
+    stopping: false,
+    pausedBySteer: true,
+    continueRequested: true,
+    targetName: "unit-tests",
+    iteration: 1,
+    maxIterations: 5,
+    planFilePath: "/tmp/task/plan.md",
+    progressFilePath: "/tmp/task/progress.md",
+    attachmentPaths: [],
+  });
+
+  assert.match(message, /Paused by steering: yes/);
+  assert.match(message, /Continue requested: yes/);
+});

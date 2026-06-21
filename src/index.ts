@@ -46,6 +46,9 @@ interface RalphStateV2 extends RalphState {
   scheduledIteration: number | null;
   pendingIterationPrompt: string | null;
   activeOwnedIteration: number | null;
+  pausedBySteer: boolean;
+  continueRequested: boolean;
+  pendingOwnedCompletion: OwnedIterationCompletion | null;
 }
 const RALPH_BUSY_ERROR =
   "Agent is busy. Wait for the current turn to finish before starting Ralph.";
@@ -110,6 +113,13 @@ function notifyIfBusy(ctx: ExtensionCommandContext): boolean {
 
   ctx.ui.notify(RALPH_BUSY_ERROR, "error");
   return true;
+}
+
+function getStreamingBehavior(
+  event: unknown,
+): "steer" | "followUp" | undefined {
+  const value = (event as { streamingBehavior?: unknown }).streamingBehavior;
+  return value === "steer" || value === "followUp" ? value : undefined;
 }
 
 function isPromptSynthesisLoop(): boolean {
@@ -358,6 +368,71 @@ async function handleOwnedIterationEnd(
   scheduleNextIteration(commandCtx, pi, completion.iteration + 1);
 }
 
+async function resumeOwnedIteration(
+  completion: OwnedIterationCompletion,
+  commandCtx: ExtensionCommandContext,
+  pi: ExtensionAPI,
+): Promise<void> {
+  const currentState = state;
+  if (
+    !isCurrentTurnState(currentState, completion.runId, completion.iteration)
+  ) {
+    return;
+  }
+
+  currentState.pausedBySteer = false;
+  currentState.continueRequested = false;
+  currentState.pendingOwnedCompletion = null;
+  updateStatus(commandCtx);
+
+  await handleOwnedIterationEnd(completion, commandCtx, pi);
+}
+
+function scheduleOwnedIterationCompletion(
+  completion: OwnedIterationCompletion,
+  commandCtx: ExtensionCommandContext,
+  pi: ExtensionAPI,
+  resumePausedState = false,
+): void {
+  setTimeout(() => {
+    const completionTask = resumePausedState
+      ? resumeOwnedIteration(completion, commandCtx, pi)
+      : handleOwnedIterationEnd(completion, commandCtx, pi);
+
+    void completionTask.catch((error: unknown) => {
+      if (!isCurrentTurnState(state, completion.runId, completion.iteration)) {
+        return;
+      }
+
+      if (commandCtx.hasUI) {
+        commandCtx.ui.notify(
+          `Ralph delayed completion failed: ${formatError(error)}`,
+          "error",
+        );
+      }
+      finalizeLoop(commandCtx, "error");
+    });
+  }, 0);
+}
+
+function storePausedCompletion(
+  completion: OwnedIterationCompletion,
+  commandCtx: ExtensionCommandContext,
+): void {
+  if (!isCurrentTurnState(state, completion.runId, completion.iteration)) {
+    return;
+  }
+
+  state.pendingOwnedCompletion = completion;
+  if (commandCtx.hasUI) {
+    commandCtx.ui.notify(
+      "Ralph loop paused. Run /ralph continue to resume.",
+      "info",
+    );
+  }
+  updateStatus(commandCtx);
+}
+
 async function runScheduledIteration(
   ctx: ExtensionCommandContext,
   pi: ExtensionAPI,
@@ -443,6 +518,9 @@ function startRalphLoop(
     scheduledIteration: null,
     pendingIterationPrompt: null,
     activeOwnedIteration: null,
+    pausedBySteer: false,
+    continueRequested: false,
+    pendingOwnedCompletion: null,
   };
   updateStatus(ctx);
   ctx.ui.notify(buildStatusMessage(state), "info");
@@ -451,6 +529,47 @@ function startRalphLoop(
 
 function formatError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+async function handleContinueCommand(
+  ctx: ExtensionCommandContext,
+  pi: ExtensionAPI,
+): Promise<void> {
+  if (!state?.active) {
+    ctx.ui.notify("Ralph loop is not active.", "info");
+    return;
+  }
+
+  if (!state.pausedBySteer) {
+    ctx.ui.notify("Ralph loop is not paused.", "info");
+    return;
+  }
+
+  state.continueRequested = true;
+  updateStatus(ctx);
+
+  const completion = state.pendingOwnedCompletion;
+  if (completion) {
+    if (ctx.isIdle()) {
+      ctx.ui.notify("Ralph loop continuing after steering.", "info");
+      await resumeOwnedIteration(completion, ctx, pi);
+      return;
+    }
+
+    ctx.ui.notify(
+      "Ralph loop will continue after the steered turn completes.",
+      "info",
+    );
+    scheduleOwnedIterationCompletion(completion, ctx, pi, true);
+    return;
+  }
+
+  ctx.ui.notify(
+    ctx.isIdle()
+      ? "Ralph loop will continue when the steered turn completes."
+      : "Ralph loop will continue after the steered turn completes.",
+    "info",
+  );
 }
 
 function handlePromptCommand(
@@ -476,6 +595,19 @@ export default function ralphLoopExtension(pi: ExtensionAPI): void {
     }
 
     if (event.text.trim().startsWith("/ralph")) {
+      return;
+    }
+
+    if (getStreamingBehavior(event) === "steer") {
+      const wasPaused = state.pausedBySteer;
+      state.pausedBySteer = true;
+      if (!wasPaused && ctx.hasUI) {
+        ctx.ui.notify(
+          "Ralph loop paused by steering. Run /ralph continue to resume.",
+          "info",
+        );
+      }
+      updateStatus(ctx);
       return;
     }
 
@@ -560,32 +692,26 @@ export default function ralphLoopExtension(pi: ExtensionAPI): void {
       return;
     }
 
-    // Let later `agent_end` handlers enqueue/start extension follow-ups first.
-    setTimeout(() => {
-      void handleOwnedIterationEnd(
-        {
-          runId,
-          iteration: currentIteration,
-          targetId,
-          finalReason,
-          achievedSummary,
-        },
-        commandCtx,
-        pi,
-      ).catch((error: unknown) => {
-        if (!isCurrentTurnState(state, runId, currentIteration)) {
-          return;
-        }
+    const completion = {
+      runId,
+      iteration: currentIteration,
+      targetId,
+      finalReason,
+      achievedSummary,
+    };
 
-        if (commandCtx.hasUI) {
-          commandCtx.ui.notify(
-            `Ralph delayed completion failed: ${formatError(error)}`,
-            "error",
-          );
-        }
-        finalizeLoop(commandCtx, "error");
-      });
-    }, 0);
+    if (state.pausedBySteer && !state.continueRequested) {
+      storePausedCompletion(completion, commandCtx);
+      return;
+    }
+
+    // Let later `agent_end` handlers enqueue/start extension follow-ups first.
+    scheduleOwnedIterationCompletion(
+      completion,
+      commandCtx,
+      pi,
+      state.pausedBySteer && state.continueRequested,
+    );
   });
 
   pi.on("session_before_compact", async () => {
@@ -644,6 +770,10 @@ export default function ralphLoopExtension(pi: ExtensionAPI): void {
           updateStatus(ctx);
           return;
         }
+
+        case "continue":
+          await handleContinueCommand(ctx, pi);
+          return;
 
         case "start":
           break;

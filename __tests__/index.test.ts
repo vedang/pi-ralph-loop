@@ -23,6 +23,7 @@ import ralphLoopExtension from "../src/index";
 type UserMessageContent = Parameters<ExtensionAPI["sendUserMessage"]>[0];
 type UserMessageOptions = Parameters<ExtensionAPI["sendUserMessage"]>[1];
 type ExtensionHandler = (...args: unknown[]) => Promise<unknown> | unknown;
+type StreamingBehavior = "steer" | "followUp";
 
 type Harness = ReturnType<typeof createHarness>;
 
@@ -188,10 +189,14 @@ async function emitInput(
   harness: Harness,
   text: string,
   source: InputSource,
+  streamingBehavior?: StreamingBehavior,
 ): Promise<void> {
   const handler = harness.handlers.get("input");
   assert.ok(handler, "expected input handler to be registered");
-  await handler({ type: "input", text, source }, harness.ctx);
+  await handler(
+    { type: "input", text, source, streamingBehavior },
+    harness.ctx,
+  );
 }
 
 async function emitSessionStart(
@@ -251,6 +256,14 @@ async function emitRalphAgentEnd(
 ): Promise<void> {
   await emitCurrentRalphBeforeAgentStart(harness);
   await emitAgentEnd(harness, assistantText);
+}
+
+async function pauseCurrentRalphTurnBySteering(
+  harness: Harness,
+  steeringText = "Please adjust this Ralph iteration.",
+): Promise<void> {
+  await emitCurrentRalphBeforeAgentStart(harness);
+  await emitInput(harness, steeringText, "interactive", "steer");
 }
 
 async function flushScheduledRalphWork(): Promise<void> {
@@ -353,6 +366,7 @@ test("/ralph help shows usage text without sending a user message", async () => 
   const message = assertSingleNotification(harness, "info");
   assert.match(message, /\/ralph help/);
   assert.match(message, /\/ralph <plan-file>/);
+  assert.match(message, /\/ralph continue/);
   assert.doesNotMatch(message, /\/ralph prompt/);
 });
 
@@ -417,6 +431,149 @@ test("Ralph stops only for interactive textarea input", async () => {
       ),
     );
   }
+});
+
+test("Ralph pauses on interactive steering input", async () => {
+  const harness = await startPlanLoop("plan.md --max-iterations 3", {
+    cwdPrefix: "ralph-loop-steer-pause-",
+  });
+
+  await pauseCurrentRalphTurnBySteering(harness);
+
+  assert.ok(
+    getNotificationMessages(harness, "info").some((message) =>
+      /paused by steering/i.test(message),
+    ),
+  );
+  await assertRalphStatus(harness, /Paused by steering: yes/);
+
+  await emitAgentEnd(harness, "Finished steered iteration.");
+  await flushScheduledRalphWork();
+
+  assert.equal(harness.treeSummaries.length, 0);
+  assert.equal(harness.sentUserMessages.length, 1);
+  await assertRalphStatus(harness, /Paused by steering: yes/);
+});
+
+test("Ralph continue resumes after paused steered turn finishes", async () => {
+  const harness = await startPlanLoop("plan.md --max-iterations 3", {
+    cwdPrefix: "ralph-loop-steer-resume-",
+  });
+
+  await pauseCurrentRalphTurnBySteering(harness);
+  await emitAgentEnd(harness, "Finished steered iteration.");
+  await flushScheduledRalphWork();
+
+  assert.equal(harness.treeSummaries.length, 0);
+  assert.equal(harness.sentUserMessages.length, 1);
+
+  await runCommand(harness, "ralph", "continue");
+  await flushScheduledRalphWork();
+
+  assert.equal(harness.treeSummaries.length, 1);
+  assert.equal(harness.sentUserMessages.length, 2);
+  assert.match(
+    userMessageToText(harness.sentUserMessages[1]),
+    /Ralph Loop iteration 2/,
+  );
+});
+
+test("Ralph continue can be requested while steered turn is running", async () => {
+  const harness = await startPlanLoop("plan.md --max-iterations 3", {
+    cwdPrefix: "ralph-loop-steer-busy-continue-",
+  });
+
+  await pauseCurrentRalphTurnBySteering(harness);
+  harness.setIdle(false);
+
+  await runCommand(harness, "ralph", "continue");
+
+  assert.equal(harness.treeSummaries.length, 0);
+  assert.equal(harness.sentUserMessages.length, 1);
+  assert.ok(
+    getNotificationMessages(harness, "info").some((message) =>
+      /will continue after the steered turn completes/i.test(message),
+    ),
+  );
+  await assertRalphStatus(harness, /Continue requested: yes/);
+
+  await emitAgentEnd(harness, "Finished steered iteration.");
+  await flushScheduledRalphWork();
+  assert.equal(harness.treeSummaries.length, 0);
+  assert.equal(harness.sentUserMessages.length, 1);
+
+  harness.setIdle(true);
+  await flushScheduledRalphWork();
+
+  assert.equal(harness.treeSummaries.length, 1);
+  assert.equal(harness.sentUserMessages.length, 2);
+  assert.match(
+    userMessageToText(harness.sentUserMessages[1]),
+    /Ralph Loop iteration 2/,
+  );
+});
+
+test("Ralph follow-up still stops by manual input", async () => {
+  const harness = await startPlanLoop("plan.md --max-iterations 3", {
+    cwdPrefix: "ralph-loop-followup-manual-stop-",
+  });
+
+  await emitCurrentRalphBeforeAgentStart(harness);
+  await emitInput(
+    harness,
+    "Queue this as a normal follow-up.",
+    "interactive",
+    "followUp",
+  );
+
+  assert.ok(
+    getNotificationMessages(harness, "warning").some((message) =>
+      /stopped by manual input/.test(message),
+    ),
+  );
+  await assertRalphStatus(harness, /Ralph loop is not active/);
+});
+
+test("Ralph continue honors completion final reason after steering", async () => {
+  const harness = await startPlanLoop("plan.md --max-iterations 3", {
+    cwdPrefix: "ralph-loop-steer-complete-",
+  });
+
+  await pauseCurrentRalphTurnBySteering(harness);
+  await emitAgentEnd(harness, "All done.\n<COMPLETE>\n");
+  await flushScheduledRalphWork();
+
+  await runCommand(harness, "ralph", "continue");
+  await flushScheduledRalphWork();
+
+  assert.equal(harness.treeSummaries.length, 1);
+  assert.equal(harness.sentUserMessages.length, 1);
+  assert.ok(
+    getNotificationMessages(harness, "info").some((message) =>
+      /Ralph loop complete/.test(message),
+    ),
+  );
+});
+
+test("Ralph continue honors max-iteration final reason after steering", async () => {
+  const harness = await startPlanLoop("plan.md --max-iterations 1", {
+    cwdPrefix: "ralph-loop-steer-max-",
+  });
+
+  await pauseCurrentRalphTurnBySteering(harness);
+  await emitAgentEnd(harness, "Finished only iteration.");
+  await flushScheduledRalphWork();
+
+  await runCommand(harness, "ralph", "continue");
+  await flushScheduledRalphWork();
+
+  assert.equal(harness.treeSummaries.length, 1);
+  assert.equal(harness.sentUserMessages.length, 1);
+  assert.ok(
+    getNotificationMessages(harness, "warning").some((message) =>
+      /max-iteration cap/.test(message),
+    ),
+  );
 });
 
 test("Ralph clears active loops when the host starts a new or reloaded session", async () => {

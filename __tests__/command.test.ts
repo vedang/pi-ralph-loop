@@ -15,9 +15,14 @@ const NON_START_COMMAND_CASES = [
   { kind: "help", label: "Help", maxIterationsArg: "-n 2" },
   { kind: "status", label: "Status", maxIterationsArg: "-n 2" },
   { kind: "stop", label: "Stop", maxIterationsArg: "--max-iterations 2" },
+  {
+    kind: "continue",
+    label: "Continue",
+    maxIterationsArg: "--max-iterations 2",
+  },
 ] as const;
 
-test("parseRalphCommand handles help, status, and stop subcommands", () => {
+test("parseRalphCommand handles help, status, stop, and continue subcommands", () => {
   for (const [command, expected] of [
     ["", { kind: "help" }],
     ["   \t  ", { kind: "help" }],
@@ -30,7 +35,7 @@ test("parseRalphCommand handles help, status, and stop subcommands", () => {
   }
 });
 
-test("parseRalphCommand rejects max-iteration flags for help, status, and stop", () => {
+test("parseRalphCommand rejects max-iteration flags for help, status, stop, and continue", () => {
   for (const { kind, label, maxIterationsArg } of NON_START_COMMAND_CASES) {
     expectParseError(
       `${kind} ${maxIterationsArg}`,
@@ -39,7 +44,7 @@ test("parseRalphCommand rejects max-iteration flags for help, status, and stop",
   }
 });
 
-test("parseRalphCommand rejects once mode for help, status, and stop", () => {
+test("parseRalphCommand rejects once mode for help, status, stop, and continue", () => {
   for (const { kind, label } of NON_START_COMMAND_CASES) {
     expectParseError(
       `once ${kind}`,

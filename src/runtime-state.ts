@@ -6,6 +6,8 @@ import type {
 export interface RalphState {
   active: boolean;
   stopping: boolean;
+  pausedBySteer?: boolean;
+  continueRequested?: boolean;
   targetName: RalphTargetName;
   iteration: number;
   maxIterations: number;
@@ -31,6 +33,10 @@ export function buildStatusMessage(state: RalphState | null): string {
       ? `Artifacts: ${state.attachmentPaths.join(", ")}`
       : "";
   const stopping = state.stopping ? "Stop requested: yes" : "";
+  const pausedBySteer = state.pausedBySteer ? "Paused by steering: yes" : "";
+  const continueRequested = state.continueRequested
+    ? "Continue requested: yes"
+    : "";
 
   return [
     "Ralph loop: active",
@@ -40,6 +46,8 @@ export function buildStatusMessage(state: RalphState | null): string {
     `Progress: ${state.progressFilePath}`,
     attachments,
     stopping,
+    pausedBySteer,
+    continueRequested,
   ]
     .filter(Boolean)
     .join("\n");
